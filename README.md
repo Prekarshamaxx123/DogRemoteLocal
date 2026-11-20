@@ -35,8 +35,8 @@ Get precompiled releases for your operating system directly from [GitHub Release
 | **Arch Linux / Manjaro** | Pacman Package | [`dogremote-1.0.0-1-x86_64.pkg.tar.zst`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote-1.0.0-1-x86_64.pkg.tar.zst) | `sudo pacman -U dogremote-1.0.0-1-x86_64.pkg.tar.zst` |
 | **Debian / Ubuntu / Kali** | Debian Package | [`dogremote_1.0.0_amd64.deb`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote_1.0.0_amd64.deb) | `sudo dpkg -i dogremote_1.0.0_amd64.deb` |
 | **Linux Portable** | Standalone Tarball | [`DogRemote-1.0.0-linux-x86_64.tar.gz`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0-linux-x86_64.tar.gz) | `tar -xzf DogRemote-1.0.0-linux-x86_64.tar.gz && ./usr/bin/dogremote` |
-| **Windows 10 / 11** | Portable Executable | [`DogRemote-Portable.exe`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-Portable.exe) | Double-click to launch (No installation required) |
-| **macOS (Apple / Intel)** | Disk Image | [`DogRemote-1.0.0.dmg`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.dmg) | Open DMG and drag DogRemote to Applications |
+| **Windows 10 / 11** | Portable Package | [`DogRemote-Windows-Portable.zip`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-Windows-Portable.zip) | Extract and double-click `DogRemote.bat` |
+| **macOS (Apple / Intel)** | Portable Package | [`DogRemote-macOS-Portable.zip`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-macOS-Portable.zip) | Extract and double-click `DogRemote.command` |
 | **Android (Phone / Tablet)**| Native Android APK | [`DogRemote-1.0.0.apk`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.apk) | Download and install APK on your Android device |
 
 ---
@@ -62,14 +62,15 @@ Get precompiled releases for your operating system directly from [GitHub Release
   ```
 
 ### 🪟 Windows (10 & 11)
-1. Download `DogRemote-Portable.exe`.
-2. Double-click the file to open the dashboard immediately.
-3. If prompted by Windows Defender SmartScreen, select **More info** -> **Run anyway**.
+1. Download `DogRemote-Windows-Portable.zip`.
+2. Extract the zip folder anywhere on your PC.
+3. Double-click `DogRemote.bat` to launch the dashboard immediately.
 
 ### 🍎 macOS
-1. Download `DogRemote-1.0.0.dmg`.
-2. Double-click to mount and drag `DogRemote.app` into your **Applications** folder.
-3. Grant **Screen Recording** and **Accessibility** permissions in macOS *System Settings > Privacy & Security* when prompted to enable capture and input simulation.
+1. Download `DogRemote-macOS-Portable.zip`.
+2. Extract the zip folder.
+3. Double-click `DogRemote.command` to launch the dashboard.
+4. Grant **Screen Recording** and **Accessibility** permissions when prompted to enable screen sharing and remote control.
 
 ### 📱 Android
 1. Download `DogRemote-1.0.0.apk` to your phone or tablet.
