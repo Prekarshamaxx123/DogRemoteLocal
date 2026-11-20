@@ -1,0 +1,493 @@
+"""
+LanCast TCP Streaming Server & Input Simulator
+High performance frame broadcasting, remote mouse/keyboard control,
+password-protected security, interactive approval modal, two-way clipboard sync, and audio streaming.
+"""
+
+import socket
+import threading
+import json
+import subprocess
+import os
+import queue
+from .protocol import (
+    TYPE_CONNECT_REQ, TYPE_CONNECT_RES, TYPE_INPUT_MOUSE_MOVE,
+    TYPE_INPUT_MOUSE_CLICK, TYPE_INPUT_KEY, TYPE_INPUT_SCROLL,
+    TYPE_CLIPBOARD, TYPE_AUDIO, TYPE_PING, TYPE_PONG, TYPE_DISCONNECT,
+    TYPE_SET_SCREEN,
+    pack_message, pack_json, pack_frame, pack_clipboard, pack_audio,
+    unpack_mouse_move, unpack_scroll, unpack_clipboard, recv_message
+)
+from .audio import AudioCapture
+
+class LanCastServer:
+    def __init__(self, host='0.0.0.0', port=5858, screen_rect=(0, 0, 1920, 1080)):
+        self.host = host
+        self.port = port
+        self.screen_offset_x = screen_rect[0]
+        self.screen_offset_y = screen_rect[1]
+        self.screen_w = screen_rect[2]
+        self.screen_h = screen_rect[3]
+        
+        self.running = False
+        self.auto_accept = False  # If no password, prompt user with interactive popup
+        self.access_password = ""  # Set by host
+        self.audio_enabled = True
+        
+        self.clients = []
+        self._lock = threading.RLock()
+        
+        self.on_incoming_request = None  # fn(session, data)
+        self.on_client_joined = None     # fn(session)
+        self.on_client_left = None       # fn(session)
+        self.on_clipboard_received = None# fn(text: str)
+        self.on_screen_switch_requested = None  # fn(screen_idx: int)
+        
+        self.screens_info = []
+        self.active_screen_idx = 0
+        
+        self.sock = None
+        self._server_thread = None
+        self._input_proc = None
+        self._input_lock = threading.Lock()
+        self._audio_capture = None
+
+    def start(self):
+        self.running = True
+        self._ensure_input_simulator()
+        
+        current_port = self.port
+        while current_port < self.port + 50:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                except (AttributeError, OSError):
+                    pass
+                s.bind((self.host, current_port))
+                s.listen(10)
+                self.sock = s
+                self.port = current_port
+                break
+            except OSError:
+                current_port += 1
+
+        self._server_thread = threading.Thread(target=self._listen_loop, daemon=True)
+        self._server_thread.start()
+        print(f"[LanCast] Server listening on port {self.port}")
+
+    def stop(self):
+        self.running = False
+        self.stop_audio()
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+        with self._lock:
+            for c in list(self.clients):
+                c.close()
+            self.clients.clear()
+        self._close_input_simulator()
+
+    def start_audio(self):
+        if not self.audio_enabled or self._audio_capture:
+            return
+        self._audio_capture = AudioCapture(on_audio_data=self.broadcast_audio)
+        self._audio_capture.start()
+
+    def stop_audio(self):
+        if self._audio_capture:
+            self._audio_capture.stop()
+            self._audio_capture = None
+
+    def set_screen_rect(self, x: int, y: int, width: int, height: int):
+        self.screen_offset_x = x
+        self.screen_offset_y = y
+        self.screen_w = width
+        self.screen_h = height
+
+    def _ensure_input_simulator(self):
+        with self._input_lock:
+            if self._input_proc is None or self._input_proc.poll() is not None:
+                display = os.environ.get('DISPLAY', ':0')
+                env = dict(os.environ, DISPLAY=display)
+                
+                xauth = os.environ.get('XAUTHORITY')
+                if not xauth or not os.path.exists(xauth):
+                    uid = os.getuid() if hasattr(os, 'getuid') else 1000
+                    candidates = [
+                        os.path.expanduser('~/.Xauthority'),
+                        f"/run/user/{uid}/gdm/Xauthority",
+                        f"/run/user/{uid}/Xauthority",
+                    ]
+                    import glob
+                    candidates.extend(glob.glob(f"/run/user/{uid}/*/Xauthority"))
+                    candidates.extend(glob.glob(f"/run/user/{uid}/xauth_*"))
+                    for cand in candidates:
+                        if os.path.exists(cand):
+                            xauth = cand
+                            break
+
+                if xauth and os.path.exists(xauth):
+                    env['XAUTHORITY'] = xauth
+                    
+                try:
+                    self._input_proc = subprocess.Popen(
+                        ['xdotool', '-'],
+                        stdin=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                        bufsize=1
+                    )
+                except Exception as e:
+                    print(f"[LanCast] Warning: could not launch xdotool: {e}")
+
+    def _send_xdotool(self, cmd_str: str):
+        self._ensure_input_simulator()
+        with self._input_lock:
+            if self._input_proc and self._input_proc.stdin:
+                try:
+                    self._input_proc.stdin.write(cmd_str)
+                    self._input_proc.stdin.flush()
+                except Exception as e:
+                    print(f"[LanCast] xdotool write error: {e}", flush=True)
+                    self._input_proc = None
+
+    def _close_input_simulator(self):
+        with self._input_lock:
+            if self._input_proc:
+                try:
+                    self._input_proc.stdin.close()
+                    self._input_proc.terminate()
+                except Exception:
+                    pass
+                self._input_proc = None
+
+    def _listen_loop(self):
+        while self.running:
+            try:
+                client_sock, addr = self.sock.accept()
+                client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                try:
+                    client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 524288)
+                    client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 524288)
+                except Exception:
+                    pass
+                session = ClientSession(self, client_sock, addr)
+                with self._lock:
+                    self.clients.append(session)
+                session.start()
+            except Exception:
+                if not self.running:
+                    break
+                import time
+                time.sleep(0.1)
+
+    def broadcast_frame(self, jpeg_bytes: bytes):
+        """Dispatches latest frame to all clients with zero queue lag."""
+        with self._lock:
+            if not self.clients:
+                return
+            targets = [c for c in self.clients if c.is_approved and c.running]
+
+        if not targets:
+            return
+
+        frame_msg = pack_frame(jpeg_bytes)
+        for client in targets:
+            client.queue_frame(frame_msg)
+
+    def broadcast_audio(self, pcm_bytes: bytes):
+        if not self.audio_enabled or not pcm_bytes:
+            return
+        with self._lock:
+            if not self.clients:
+                return
+            targets = [c for c in self.clients if c.is_approved and c.running and c.allow_audio]
+
+        if not targets:
+            return
+
+        audio_msg = pack_audio(pcm_bytes)
+        for client in targets:
+            client.send_raw(audio_msg)
+
+    def broadcast_clipboard(self, text: str, exclude_session=None):
+        if not text:
+            return
+        with self._lock:
+            targets = [c for c in self.clients if c.is_approved and c.running and c != exclude_session]
+
+        if not targets:
+            return
+
+        clip_msg = pack_clipboard(text)
+        for client in targets:
+            client.send_raw(clip_msg)
+
+    def set_available_screens(self, screens: list, active_id: int = 0):
+        self.screens_info = screens
+        self.active_screen_idx = active_id
+
+    def broadcast_screen_changed(self, screen_idx: int, screens_info=None):
+        self.active_screen_idx = screen_idx
+        if screens_info is not None:
+            self.screens_info = screens_info
+        msg = pack_json(TYPE_SET_SCREEN, {
+            "screen_index": screen_idx,
+            "screens": self.screens_info
+        })
+        with self._lock:
+            targets = [c for c in self.clients if c.is_approved and c.running]
+        for client in targets:
+            client.send_raw(msg)
+
+    def remove_client(self, session):
+        with self._lock:
+            if session in self.clients:
+                self.clients.remove(session)
+        if self.on_client_left:
+            self.on_client_left(session)
+
+    def execute_mouse_move(self, norm_x: float, norm_y: float):
+        gx = self.screen_offset_x + max(0, min(self.screen_w, int(norm_x * self.screen_w)))
+        gy = self.screen_offset_y + max(0, min(self.screen_h, int(norm_y * self.screen_h)))
+        self._send_xdotool(f"mousemove {gx} {gy}\n")
+
+    def execute_mouse_click(self, btn_name: str, action: str, norm_x: float = None, norm_y: float = None):
+        btn_map = {'left': '1', 'middle': '2', 'right': '3'}
+        b = btn_map.get(btn_name, '1')
+        cmd = ""
+        if norm_x is not None and norm_y is not None:
+            gx = self.screen_offset_x + max(0, min(self.screen_w, int(norm_x * self.screen_w)))
+            gy = self.screen_offset_y + max(0, min(self.screen_h, int(norm_y * self.screen_h)))
+            cmd += f"mousemove {gx} {gy}\n"
+        
+        if action == 'down':
+            cmd += f"mousedown {b}\n"
+        elif action == 'up':
+            cmd += f"mouseup {b}\n"
+        elif action == 'click':
+            cmd += f"click {b}\n"
+        elif action == 'dblclick':
+            cmd += f"click --repeat 2 --delay 50 {b}\n"
+            
+        self._send_xdotool(cmd)
+
+    def execute_scroll(self, steps: int):
+        btn = '4' if steps > 0 else '5'
+        count = min(max(1, abs(steps)), 8)
+        self._send_xdotool(f"click --repeat {count} {btn}\n")
+
+    def execute_key(self, key_name: str, action: str):
+        if not key_name:
+            return
+        if action == 'type':
+            escaped = key_name.replace('"', '\\"')
+            self._send_xdotool(f'type -- "{escaped}"\n')
+        elif action == 'key':
+            self._send_xdotool(f"key {key_name}\n")
+        else:
+            cmd = 'keydown' if action == 'down' else 'keyup'
+            self._send_xdotool(f"{cmd} {key_name}\n")
+
+
+class ClientSession:
+    def __init__(self, server: LanCastServer, sock: socket.socket, addr):
+        self.server = server
+        self.sock = sock
+        self.addr = addr
+        self.is_approved = False
+        self.allow_control = True
+        self.allow_audio = True
+        self.peer_name = f"Device-{addr[0]}"
+        self.running = False
+        self._thread = None
+        self._sender_thread = None
+        self._write_lock = threading.Lock()
+        self._frame_queue = queue.Queue(maxsize=1)
+        self._is_closing = False
+
+    def start(self):
+        self.running = True
+        try:
+            self.sock.settimeout(None)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            try:
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 524288)
+                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 524288)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        self._thread = threading.Thread(target=self._recv_loop, daemon=True)
+        self._thread.start()
+        self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
+        self._sender_thread.start()
+
+    def queue_frame(self, frame_msg: bytes):
+        """Pushes frame into 1-item queue; replaces stale frame to eliminate latency."""
+        if not self.running or not self.is_approved:
+            return
+        try:
+            self._frame_queue.put_nowait(frame_msg)
+        except queue.Full:
+            try:
+                self._frame_queue.get_nowait()
+                self._frame_queue.put_nowait(frame_msg)
+            except Exception:
+                pass
+
+    def _sender_loop(self):
+        while self.running:
+            try:
+                frame_msg = self._frame_queue.get(timeout=0.4)
+            except queue.Empty:
+                continue
+            self.send_raw(frame_msg)
+
+    def send_raw(self, data: bytes):
+        if not self.running or not self.sock:
+            return
+        if not self._write_lock.acquire(timeout=0.25):
+            return
+        try:
+            self.sock.sendall(data)
+        except Exception:
+            self.close()
+        finally:
+            try:
+                self._write_lock.release()
+            except RuntimeError:
+                pass
+
+    def accept_connection(self, allow_control: bool = True, allow_audio: bool = True):
+        self.is_approved = True
+        self.allow_control = allow_control
+        self.allow_audio = allow_audio
+        resp = pack_json(TYPE_CONNECT_RES, {
+            "accepted": True,
+            "permissions": {"screen": True, "control": allow_control, "audio": allow_audio},
+            "screens": self.server.screens_info,
+            "active_screen": self.server.active_screen_idx
+        })
+        self.send_raw(resp)
+        if self.server.on_client_joined:
+            self.server.on_client_joined(self)
+
+    def reject_connection(self, reason: str = "Connection declined"):
+        resp = pack_json(TYPE_CONNECT_RES, {"accepted": False, "reason": reason})
+        self.send_raw(resp)
+        self.close()
+
+    def close(self):
+        if self._is_closing:
+            return
+        self._is_closing = True
+        self.running = False
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+        self.server.remove_client(self)
+
+    def _recv_loop(self):
+        while self.running:
+            msg_type, payload = recv_message(self.sock)
+            if msg_type is None:
+                break
+
+            if msg_type == TYPE_CONNECT_REQ:
+                try:
+                    data = json.loads(payload.decode('utf-8'))
+                    self.peer_name = data.get("name", self.peer_name)
+                    req_control = data.get("req_control", True)
+                    req_password = data.get("password", "").strip()
+                    
+                    # 1. Host has a security password configured
+                    if self.server.access_password:
+                        if req_password == self.server.access_password:
+                            self.accept_connection(allow_control=req_control)
+                        else:
+                            # Reject with specific password code so client can prompt user
+                            reason_code = "PASSWORD_INCORRECT" if req_password else "PASSWORD_REQUIRED"
+                            self.reject_connection(reason_code)
+                    else:
+                        # 2. Host has NO password configured
+                        if self.server.auto_accept:
+                            self.accept_connection(allow_control=req_control)
+                        elif self.server.on_incoming_request:
+                            # Pop up interactive Accept/Decline modal on host screen!
+                            self.server.on_incoming_request(self, data)
+                        else:
+                            self.accept_connection(allow_control=req_control)
+                except Exception:
+                    pass
+
+            elif msg_type == TYPE_INPUT_MOUSE_MOVE:
+                if self.is_approved and self.allow_control:
+                    try:
+                        nx, ny = unpack_mouse_move(payload)
+                        self.server.execute_mouse_move(nx, ny)
+                    except Exception:
+                        pass
+
+            elif msg_type == TYPE_INPUT_MOUSE_CLICK:
+                if self.is_approved and self.allow_control:
+                    try:
+                        info = json.loads(payload.decode('utf-8'))
+                        self.server.execute_mouse_click(
+                            info.get('button', 'left'),
+                            info.get('action', 'click'),
+                            info.get('x'),
+                            info.get('y')
+                        )
+                    except Exception:
+                        pass
+
+            elif msg_type == TYPE_INPUT_SCROLL:
+                if self.is_approved and self.allow_control:
+                    try:
+                        steps = unpack_scroll(payload)
+                        self.server.execute_scroll(steps)
+                    except Exception:
+                        pass
+
+            elif msg_type == TYPE_INPUT_KEY:
+                if self.is_approved and self.allow_control:
+                    try:
+                        info = json.loads(payload.decode('utf-8'))
+                        self.server.execute_key(info.get('key', ''), info.get('action', 'down'))
+                    except Exception:
+                        pass
+
+            elif msg_type == TYPE_CLIPBOARD:
+                if self.is_approved:
+                    try:
+                        clip_text = unpack_clipboard(payload)
+                        if self.server.on_clipboard_received:
+                            self.server.on_clipboard_received(clip_text)
+                        self.server.broadcast_clipboard(clip_text, exclude_session=self)
+                    except Exception:
+                        pass
+
+            elif msg_type == TYPE_PING:
+                self.send_raw(pack_message(TYPE_PONG, payload))
+
+            elif msg_type == TYPE_SET_SCREEN:
+                if self.is_approved:
+                    try:
+                        info = json.loads(payload.decode('utf-8'))
+                        sid = info.get("screen_index", 0)
+                        if self.server.on_screen_switch_requested:
+                            self.server.on_screen_switch_requested(sid)
+                    except Exception:
+                        pass
+
+            elif msg_type == TYPE_DISCONNECT:
+                break
+
+        self.close()

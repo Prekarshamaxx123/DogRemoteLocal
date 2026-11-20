@@ -1,0 +1,180 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+echo "========================================================"
+echo "          LanCast Multi-Platform Build System           "
+echo "========================================================"
+
+TARGET=${1:-"all"}
+mkdir -p "$ROOT_DIR/dist"
+
+build_linux_appimage() {
+    echo "📦 [Linux] Building native Linux executable using PyInstaller..."
+    rm -rf "$ROOT_DIR/build/lancast" "$ROOT_DIR/dist/lancast"
+    pyinstaller --noconfirm --clean --windowed --name "lancast" \
+        --add-data "public:public" \
+        "$ROOT_DIR/main.py"
+
+    echo "📦 [Linux] Preparing AppDir for AppImage..."
+    APP_DIR="$ROOT_DIR/dist/AppDir"
+    rm -rf "$APP_DIR"
+    mkdir -p "$APP_DIR/usr/bin" "$APP_DIR/usr/share/icons/hicolor/512x512/apps"
+
+    cp -r "$ROOT_DIR/dist/lancast/"* "$APP_DIR/usr/bin/" 2>/dev/null || cp "$ROOT_DIR/dist/lancast" "$APP_DIR/usr/bin/"
+    cp "$ROOT_DIR/public/icon.png" "$APP_DIR/lancast.png"
+    cp "$ROOT_DIR/public/icon.png" "$APP_DIR/usr/share/icons/hicolor/512x512/apps/lancast.png"
+
+    cat << 'EOF' > "$APP_DIR/lancast.desktop"
+[Desktop Entry]
+Name=LanCast
+Comment=Ultra-Fast Same-Network Screen Sharing & Remote Control
+Exec=lancast
+Icon=lancast
+Terminal=false
+Type=Application
+Categories=Network;RemoteAccess;Utility;
+EOF
+
+    cat << 'EOF' > "$APP_DIR/AppRun"
+#!/bin/sh
+SELF=$(readlink -f "$0")
+HERE=${SELF%/*}
+export PATH="${HERE}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+exec "${HERE}/usr/bin/lancast" "$@"
+EOF
+    chmod +x "$APP_DIR/AppRun"
+
+    echo "📦 [Linux] Generating Universal Linux AppImage..."
+    APPIMAGETOOL="/tmp/appimagetool"
+    if [ ! -f "$APPIMAGETOOL" ]; then
+        curl -sL https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -o "$APPIMAGETOOL"
+        chmod +x "$APPIMAGETOOL"
+    fi
+
+    rm -f "$ROOT_DIR/dist/LanCast-1.0.0.AppImage"
+    ARCH=x86_64 "$APPIMAGETOOL" "$APP_DIR" "$ROOT_DIR/dist/LanCast-1.0.0.AppImage"
+    chmod +x "$ROOT_DIR/dist/LanCast-1.0.0.AppImage"
+    echo "✅ Universal Linux AppImage ready: dist/LanCast-1.0.0.AppImage"
+}
+
+build_deb() {
+    echo "📦 [Debian/Ubuntu/Kali] Generating .deb package..."
+    DEB_DIR="$ROOT_DIR/dist/deb_pkg"
+    rm -rf "$DEB_DIR"
+    mkdir -p "$DEB_DIR/DEBIAN" "$DEB_DIR/usr/bin" "$DEB_DIR/usr/share/applications" "$DEB_DIR/usr/share/icons/hicolor/512x512/apps"
+
+    cp -r "$ROOT_DIR/dist/AppDir/usr/bin/"* "$DEB_DIR/usr/bin/"
+    cp "$ROOT_DIR/dist/AppDir/lancast.desktop" "$DEB_DIR/usr/share/applications/"
+    cp "$ROOT_DIR/public/icon.png" "$DEB_DIR/usr/share/icons/hicolor/512x512/apps/lancast.png"
+
+    cat << 'EOF' > "$DEB_DIR/DEBIAN/control"
+Package: lancast
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: LanCast Team <lancast@local.lan>
+Description: Ultra-Fast Same-Network Screen Sharing & Remote Control
+ LanCast is a high-performance, low-latency screen sharing and remote desktop
+ tool engineered for seamless peer-to-peer productivity over local network.
+EOF
+
+    dpkg-deb --build --root-owner-group "$DEB_DIR" "$ROOT_DIR/dist/lancast_1.0.0_amd64.deb"
+    rm -rf "$DEB_DIR"
+    echo "✅ Debian package ready: dist/lancast_1.0.0_amd64.deb"
+}
+
+build_arch() {
+    echo "📦 [Arch Linux] Generating Arch pacman package (.pkg.tar.zst)..."
+    ARCH_DIR="$ROOT_DIR/dist/arch_pkg"
+    rm -rf "$ARCH_DIR"
+    mkdir -p "$ARCH_DIR/usr/bin" "$ARCH_DIR/usr/share/applications" "$ARCH_DIR/usr/share/icons/hicolor/512x512/apps"
+
+    cp -r "$ROOT_DIR/dist/AppDir/usr/bin/"* "$ARCH_DIR/usr/bin/"
+    cp "$ROOT_DIR/dist/AppDir/lancast.desktop" "$ARCH_DIR/usr/share/applications/"
+    cp "$ROOT_DIR/public/icon.png" "$ARCH_DIR/usr/share/icons/hicolor/512x512/apps/lancast.png"
+
+    cat << 'EOF' > "$ARCH_DIR/.PKGINFO"
+pkgname = lancast
+pkgbase = lancast
+pkgver = 1.0.0-1
+pkgdesc = Ultra-Fast Same-Network Screen Sharing & Remote Control
+url = https://github.com/lancast/lancast
+builddate = 1732121700
+packager = LanCast Team <lancast@local.lan>
+size = 280000000
+arch = x86_64
+license = MIT
+depend = glibc
+depend = libx11
+depend = libxfixes
+depend = libxtst
+EOF
+
+    (cd "$ARCH_DIR" && tar --zstd -cf "$ROOT_DIR/dist/lancast-1.0.0-1-x86_64.pkg.tar.zst" .PKGINFO usr)
+    rm -rf "$ARCH_DIR"
+    echo "✅ Arch Linux package ready: dist/lancast-1.0.0-1-x86_64.pkg.tar.zst"
+
+    echo "📦 [Linux Portable] Generating portable tarball (.tar.gz)..."
+    (cd "$ROOT_DIR/dist" && tar -czf LanCast-1.0.0-linux-x86_64.tar.gz -C AppDir usr lancast.desktop lancast.png)
+    echo "✅ Portable Linux tarball ready: dist/LanCast-1.0.0-linux-x86_64.tar.gz"
+}
+
+build_android() {
+    echo "📦 [Android] Building Android APK using Gradle & Java 21..."
+    JAVA_HOME_PATH=""
+    if [ -d "$HOME/.local/jvm/jdk-21.0.6+7" ]; then
+        JAVA_HOME_PATH="$HOME/.local/jvm/jdk-21.0.6+7"
+    elif [ -d "/usr/lib/jvm/java-21-openjdk-amd64" ]; then
+        JAVA_HOME_PATH="/usr/lib/jvm/java-21-openjdk-amd64"
+    fi
+
+    if [ -n "$JAVA_HOME_PATH" ]; then
+        export JAVA_HOME="$JAVA_HOME_PATH"
+        export PATH="$JAVA_HOME/bin:$PATH"
+    fi
+
+    (cd "$ROOT_DIR/android" && ./gradlew assembleDebug --no-daemon)
+    APK_SRC="$ROOT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+    if [ -f "$APK_SRC" ]; then
+        cp "$APK_SRC" "$ROOT_DIR/dist/LanCast-1.0.0.apk"
+        echo "✅ Android APK successfully built: dist/LanCast-1.0.0.apk"
+    else
+        echo "❌ Android APK build failed to output app-debug.apk"
+    fi
+}
+
+case $TARGET in
+    "appimage"|"linux")
+        build_linux_appimage
+        ;;
+    "deb")
+        build_deb
+        ;;
+    "arch")
+        build_arch
+        ;;
+    "android"|"apk")
+        build_android
+        ;;
+    "all")
+        build_linux_appimage
+        build_deb
+        build_arch
+        build_android
+        echo ""
+        echo "========================================================"
+        echo " 🎉 ALL BUILDS COMPLETED SUCCESSFULLY!"
+        echo "    Output files in $ROOT_DIR/dist/:"
+        ls -lh "$ROOT_DIR/dist/"*.{AppImage,deb,zst,apk,tar.gz} 2>/dev/null || true
+        echo "========================================================"
+        ;;
+    *)
+        echo "Usage: ./scripts/build-all.sh [linux|deb|arch|android|all]"
+        exit 1
+        ;;
+esac

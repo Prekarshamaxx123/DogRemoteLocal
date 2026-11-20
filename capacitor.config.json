@@ -1,0 +1,12 @@
+{
+  "appId": "com.lancast.pro",
+  "appName": "LanCast Pro",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

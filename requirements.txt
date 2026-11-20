@@ -1,0 +1,8 @@
+PyQt6>=6.5.0
+mss>=9.0.1
+Pillow>=10.0.0
+pynput>=1.7.6
+sounddevice>=0.4.6
+numpy>=1.24.0
+zeroconf>=0.131.0
+pyinstaller>=6.0.0

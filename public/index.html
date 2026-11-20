@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LanCast Pro - High Performance LAN Screen Share</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0b0e17">
+    <link rel="stylesheet" href="/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app" class="app-container">
+        <!-- Top Navigation Bar -->
+        <header class="app-header">
+            <div class="header-brand">
+                <div class="brand-logo">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="brand-title">LanCast <span class="badge-lan">PRO</span></h1>
+                    <span class="brand-subtitle">Ultra-Low Latency P2P Screen Share</span>
+                </div>
+            </div>
+
+            <div class="header-status">
+                <div class="status-indicator">
+                    <span class="pulse-dot"></span>
+                    <span id="networkStatusText">LAN Active</span>
+                </div>
+                <div class="lan-ip-badge" id="hostIpBadge" title="Click to copy IP">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                    <span id="headerIpText">192.168.x.x</span>
+                </div>
+                <button class="btn-icon" id="btnShowQr" title="Show Mobile QR Code">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Dashboard View -->
+        <main class="dashboard-grid" id="dashboardView">
+            <!-- Left Card: This Device (Host) -->
+            <section class="desk-card host-card">
+                <div class="card-header">
+                    <div class="card-title-group">
+                        <span class="card-icon host-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                        </span>
+                        <div>
+                            <h2>This Device</h2>
+                            <p class="card-desc">Share your screen with devices on this Wi-Fi</p>
+                        </div>
+                    </div>
+                    <span class="device-pill" id="deviceHostName">Local PC</span>
+                </div>
+
+                <div class="code-box-container">
+                    <label class="section-label">Your Device Address</label>
+                    <div class="code-display" id="deviceCodeBox" title="Click to copy code">
+                        <span class="code-text" id="myDeviceCode">--- --- ---</span>
+                        <button class="btn-copy" id="btnCopyCode" title="Copy Code">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                    </div>
+                    <p class="code-hint">Provide this 9-digit code or your LAN IP to any device on your Wi-Fi.</p>
+                </div>
+
+                <!-- Host Sharing Actions -->
+                <div class="sharing-controls">
+                    <button class="btn-primary btn-large btn-glow" id="btnToggleShare">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        <span id="btnShareText">Start Sharing Screen</span>
+                    </button>
+
+                    <div class="stream-options">
+                        <div class="option-row">
+                            <label for="qualitySelect">Stream Quality:</label>
+                            <select id="qualitySelect" class="custom-select">
+                                <option value="1080p60">1080p @ 60 FPS (Ultra Smooth)</option>
+                                <option value="720p30" selected>720p @ 30 FPS (Balanced LAN)</option>
+                                <option value="480p60">480p @ 60 FPS (Lowest Latency)</option>
+                            </select>
+                        </div>
+                        <div class="option-row checkbox-row">
+                            <label class="custom-checkbox">
+                                <input type="checkbox" id="chkAudioShare" checked>
+                                <span class="checkmark"></span>
+                                <span>Include System Audio</span>
+                            </label>
+                            <label class="custom-checkbox">
+                                <input type="checkbox" id="chkRemoteControlDefault" checked>
+                                <span class="checkmark"></span>
+                                <span>Enable Remote Input</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Active Viewers Section -->
+                <div class="viewers-section" id="viewersSection" style="display: none;">
+                    <label class="section-label">Active Connected Viewers (<span id="viewersCount">0</span>)</label>
+                    <div class="viewers-list" id="viewersList"></div>
+                </div>
+            </section>
+
+            <!-- Right Card: Remote Desk (Client / Viewer) -->
+            <section class="desk-card client-card">
+                <div class="card-header">
+                    <div class="card-title-group">
+                        <span class="card-icon remote-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"></path><path d="M10 14L21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>
+                        </span>
+                        <div>
+                            <h2>Remote Device</h2>
+                            <p class="card-desc">Connect and view a screen on this network</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="remote-connect-form">
+                    <label class="section-label" for="remoteCodeInput">Enter Device Address or IP</label>
+                    <div class="input-with-button">
+                        <input type="text" id="remoteCodeInput" placeholder="e.g. 192.168.8.194 or 583 912 402" autocomplete="off" spellcheck="false">
+                        <button class="btn-connect" id="btnConnectRemote">
+                            <span>Connect</span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                        </button>
+                    </div>
+                    <div class="password-input-row" style="margin-top: 8px;">
+                        <input type="password" id="remotePasswordInput" placeholder="Host Password (if required)" class="form-input" style="width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #fff; font-size: 13px;">
+                    </div>
+                </div>
+
+                <!-- Discovered LAN Devices Section -->
+                <div class="discovered-section">
+                    <div class="discovered-header">
+                        <label class="section-label">Discovered on Wi-Fi</label>
+                        <span class="discovery-pulse"><span class="pulse-ring"></span> Auto-Searching</span>
+                    </div>
+                    <div class="devices-list" id="discoveredDevicesList">
+                        <div class="empty-devices">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+                            <p>Scanning same network for other OmniDesk devices...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Mobile Connect Info -->
+                <div class="mobile-tip-card">
+                    <div class="mobile-tip-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+                    </div>
+                    <div class="mobile-tip-content">
+                        <strong>Connect from Android / iPhone</strong>
+                        <p>No app installation required. Open your mobile browser and enter your PC's IP, or scan the QR code.</p>
+                    </div>
+                    <button class="btn-secondary btn-sm" id="btnQuickQr">Scan QR</button>
+                </div>
+            </section>
+        </main>
+
+        <!-- Fullscreen Remote Screen Viewer Interface -->
+        <div class="screen-viewer-container" id="screenViewer" style="display: none;">
+            <!-- Floating Overlay Top Bar -->
+            <div class="viewer-topbar" id="viewerTopbar">
+                <div class="viewer-meta">
+                    <span class="live-badge"><span class="pulse-dot"></span> LIVE</span>
+                    <span class="peer-title" id="remotePeerTitle">Remote PC</span>
+                    <div class="stat-pill" id="latencyStat">
+                        <span class="stat-label">Latency:</span>
+                        <span class="stat-val" id="statLatencyVal">-- ms</span>
+                    </div>
+                    <div class="stat-pill" id="fpsStat">
+                        <span class="stat-val" id="statFpsVal">60 FPS</span>
+                    </div>
+                </div>
+
+                <div class="viewer-actions">
+                    <button class="tool-btn" id="btnToggleControl" title="Toggle Remote Control (Mouse & Keys)">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="12 8 8 12 12 16 12 8"></polygon></svg>
+                        <span id="controlText">Control: ON</span>
+                    </button>
+                    <button class="tool-btn" id="btnMobileKeyboard" title="Open Virtual Keyboard">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 16h8"></path></svg>
+                    </button>
+                    <button class="tool-btn" id="btnToggleAudio" title="Toggle Remote Audio">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                    </button>
+                    <button class="tool-btn" id="btnToggleFullscreen" title="Fullscreen">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+                    </button>
+                    <button class="tool-btn btn-danger" id="btnDisconnectViewer" title="Disconnect Session">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+                        <span>Disconnect</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Video Player Surface -->
+            <div class="video-wrapper" id="videoWrapper">
+                <video id="remoteVideo" autoplay playsinline></video>
+                <!-- Touch virtual cursor for mobile / tablet -->
+                <div id="virtualCursor" class="virtual-cursor" style="display: none;"></div>
+            </div>
+
+            <!-- Mobile Keyboard Modifier Toolbar (Ctrl, Alt, Shift, Esc, Tab, Win, Arrows) -->
+            <div class="mobile-modifier-toolbar" id="mobileModifierToolbar">
+                <button class="mod-key" data-key="Control_L">Ctrl</button>
+                <button class="mod-key" data-key="Alt_L">Alt</button>
+                <button class="mod-key" data-key="Shift_L">Shift</button>
+                <button class="mod-key" data-key="Escape">Esc</button>
+                <button class="mod-key" data-key="Tab">Tab</button>
+                <button class="mod-key" data-key="Super_L">Win</button>
+                <button class="mod-key" data-key="BackSpace">Bksp</button>
+                <button class="mod-key" data-key="Return">Enter</button>
+                <button class="mod-key" data-key="Left">◄</button>
+                <button class="mod-key" data-key="Up">▲</button>
+                <button class="mod-key" data-key="Down">▼</button>
+                <button class="mod-key" data-key="Right">►</button>
+            </div>
+
+            <!-- Mobile Keyboard Input Hidden Field -->
+            <input type="text" id="mobileKeyInput" class="hidden-input" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </div>
+
+        <!-- Incoming Connection Security Modal (lancast Style) -->
+        <div class="modal-overlay" id="incomingModal" style="display: none;">
+            <div class="modal-card incoming-card">
+                <div class="modal-badge-row">
+                    <span class="incoming-pulse-badge">Incoming Connection Request</span>
+                </div>
+                <div class="incoming-avatar">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                </div>
+                <h3 class="incoming-device-name" id="incomingDeviceName">Remote Device</h3>
+                <p class="incoming-ip" id="incomingDeviceIp">192.168.x.x</p>
+                <p class="incoming-question">wants to connect and view your screen.</p>
+
+                <div class="permissions-checklist">
+                    <label class="custom-checkbox">
+                        <input type="checkbox" id="permScreen" checked disabled>
+                        <span class="checkmark"></span>
+                        <span>Allow Screen Sharing</span>
+                    </label>
+                    <label class="custom-checkbox">
+                        <input type="checkbox" id="permControl" checked>
+                        <span class="checkmark"></span>
+                        <span>Allow Remote Control (Mouse & Keyboard)</span>
+                    </label>
+                    <label class="custom-checkbox">
+                        <input type="checkbox" id="permAudio" checked>
+                        <span class="checkmark"></span>
+                        <span>Allow Sound Transmission</span>
+                    </label>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn-modal btn-reject" id="btnRejectIncoming">Decline</button>
+                    <button class="btn-modal btn-accept" id="btnAcceptIncoming">Accept Connection</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- QR Code Modal -->
+        <div class="modal-overlay" id="qrModal" style="display: none;">
+            <div class="modal-card qr-card">
+                <button class="modal-close" id="btnCloseQr">&times;</button>
+                <h3>Scan to Connect Instantly</h3>
+                <p class="qr-desc">Scan with your Android, iPhone, iPad, or any device camera connected to this Wi-Fi network.</p>
+                
+                <div class="qr-image-wrapper">
+                    <img id="qrImage" src="" alt="LAN QR Code">
+                </div>
+
+                <div class="qr-url-box">
+                    <span id="qrUrlText">http://192.168.x.x:5000</span>
+                    <button class="btn-copy" id="btnCopyUrl" title="Copy URL">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast notification container -->
+        <div id="toastContainer" class="toast-container"></div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
