@@ -1,7 +1,7 @@
 {
-  "name": "OmniDesk LAN - Screen Share",
-  "short_name": "OmniDesk",
-  "description": "Ultra-fast same network screen sharing and remote desktop",
+  "name": "DogRemote Local - Screen Share",
+  "short_name": "DogRemote",
+  "description": "Ultra-fast peer-to-peer same network screen sharing and remote desktop",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#080c14",

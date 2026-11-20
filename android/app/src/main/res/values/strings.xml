@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">OmniDesk LAN</string>
-    <string name="title_activity_main">OmniDesk LAN</string>
-    <string name="package_name">com.omnidesk.lan</string>
-    <string name="custom_url_scheme">com.omnidesk.lan</string>
+    <string name="app_name">DogRemote Local</string>
+    <string name="title_activity_main">DogRemote Local</string>
+    <string name="package_name">com.dogremote.local</string>
+    <string name="custom_url_scheme">com.dogremote.local</string>
 </resources>

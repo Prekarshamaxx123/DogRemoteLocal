@@ -1,6 +1,6 @@
 {
-  "appId": "com.lancast.pro",
-  "appName": "LanCast Pro",
+  "appId": "com.dogremote.local",
+  "appName": "DogRemote Local",
   "webDir": "public",
   "server": {
     "androidScheme": "https",

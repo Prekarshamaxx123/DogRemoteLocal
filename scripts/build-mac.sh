@@ -14,19 +14,19 @@ echo "📦 [1/3] Installing dependencies..."
 python3 -m pip install -r requirements.txt
 
 echo "📦 [2/3] Building macOS .app bundle..."
-rm -rf build dist/LanCast.app dist/LanCast.dmg
-pyinstaller --noconfirm --clean --windowed --name "LanCast" \
+rm -rf build dist/DogRemote.app dist/DogRemote.dmg
+pyinstaller --noconfirm --clean --windowed --name "DogRemote" \
     --icon "public/icon.png" \
     --add-data "public:public" \
-    --osx-bundle-identifier "com.lancast.pro" \
+    --osx-bundle-identifier "com.dogremote.local" \
     main.py
 
 echo "📦 [3/3] Packaging macOS .dmg installer..."
 if command -v hdiutil &> /dev/null; then
-    hdiutil create -volname "LanCast" -srcfolder "dist/LanCast.app" -ov -format UDZO "dist/LanCast-1.0.0.dmg"
-    echo "✅ macOS DMG installer created: dist/LanCast-1.0.0.dmg"
+    hdiutil create -volname "DogRemote" -srcfolder "dist/DogRemote.app" -ov -format UDZO "dist/DogRemote-1.0.0.dmg"
+    echo "✅ macOS DMG installer created: dist/DogRemote-1.0.0.dmg"
 else
-    echo "⚠️ hdiutil not found (only available on macOS). App bundle created at dist/LanCast.app"
+    echo "⚠️ hdiutil not found (only available on macOS). App bundle created at dist/DogRemote.app"
 fi
 
 echo "🎉 Build finished!"

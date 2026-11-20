@@ -360,7 +360,7 @@ class ScreenViewerWindow(QMainWindow):
         self._has_shown_disconnect = False
         self._last_copied_text = ""
         
-        self.setWindowTitle(f"LanCast Pro Stream - {peer_name}")
+        self.setWindowTitle(f"DogRemote Local Stream - {peer_name}")
         self.setWindowIcon(QIcon(APP_ICON))
         self.resize(1280, 720)
         self.setMinimumSize(640, 360)
@@ -906,7 +906,7 @@ class ScreenCaptureWorker(threading.Thread):
 class LanCastMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("LanCast Pro - LAN Screen Share & Remote Desktop")
+        self.setWindowTitle("DogRemote Local - Ultra-Fast P2P LAN Screen Share & Remote Desktop")
         self.setWindowIcon(QIcon(APP_ICON))
         self.resize(1040, 710)
         self.setMinimumSize(920, 620)
@@ -946,11 +946,11 @@ class LanCastMainWindow(QMainWindow):
         brand_box = QHBoxLayout()
         brand_box.setSpacing(10)
         
-        lbl_brand = QLabel("LanCast")
+        lbl_brand = QLabel("🐕 DogRemote")
         lbl_brand.setStyleSheet("font-size: 22px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px;")
         brand_box.addWidget(lbl_brand)
 
-        lbl_pro = QLabel("PRO")
+        lbl_pro = QLabel("LOCAL")
         lbl_pro.setProperty("class", "brand-badge")
         brand_box.addWidget(lbl_pro)
         header.addLayout(brand_box)
@@ -1074,8 +1074,9 @@ class LanCastMainWindow(QMainWindow):
         self.txt_host_pwd = QLineEdit(self.default_password)
         self.txt_host_pwd.setMaxLength(6)
         self.txt_host_pwd.setEchoMode(QLineEdit.EchoMode.Normal)
-        self.txt_host_pwd.setMaximumWidth(110)
-        self.txt_host_pwd.setStyleSheet("font-family: monospace; font-size: 13px; font-weight: bold; text-align: center;")
+        self.txt_host_pwd.setFixedWidth(125)
+        self.txt_host_pwd.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.txt_host_pwd.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; padding: 6px 4px; letter-spacing: 2px;")
         self.txt_host_pwd.textChanged.connect(self.on_password_changed)
         pwd_box.addWidget(self.txt_host_pwd)
 
@@ -1204,7 +1205,7 @@ class LanCastMainWindow(QMainWindow):
         disc_head.addStretch()
         self.btn_rescan = QPushButton("Refresh Scan")
         self.btn_rescan.setProperty("class", "btn-secondary")
-        self.btn_rescan.setToolTip("Scan local network subnet on-demand for active LanCast hosts")
+        self.btn_rescan.setToolTip("Scan local network subnet on-demand for active DogRemote hosts")
         self.btn_rescan.clicked.connect(self.trigger_subnet_scan)
         disc_head.addWidget(self.btn_rescan)
         client_layout.addLayout(disc_head)
@@ -1212,6 +1213,7 @@ class LanCastMainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMinimumHeight(160)
         scroll.setStyleSheet("""
             QScrollArea {
                 background-color: #0d1222;
@@ -1222,18 +1224,18 @@ class LanCastMainWindow(QMainWindow):
         self.discovered_container = QWidget()
         self.discovered_container.setStyleSheet("background: transparent;")
         self.discovered_layout = QVBoxLayout(self.discovered_container)
-        self.discovered_layout.setContentsMargins(10, 10, 10, 10)
+        self.discovered_layout.setContentsMargins(12, 12, 12, 12)
         self.discovered_layout.setSpacing(10)
         
         self.empty_state_frame = QFrame()
-        self.empty_state_frame.setStyleSheet("background: transparent; padding: 20px 14px;")
+        self.empty_state_frame.setStyleSheet("background: rgba(255, 255, 255, 0.02); border: 1px dashed rgba(255, 255, 255, 0.1); border-radius: 8px;")
         empty_layout = QVBoxLayout(self.empty_state_frame)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_layout.setContentsMargins(12, 16, 12, 16)
-        empty_layout.setSpacing(6)
+        empty_layout.setContentsMargins(16, 24, 16, 24)
+        empty_layout.setSpacing(8)
 
-        self.lbl_empty_devices = QLabel("Click 'Refresh Scan' to search your local network for active hosts.")
-        self.lbl_empty_devices.setStyleSheet("color: #94a3b8; font-size: 12px; font-weight: 500; line-height: 1.4;")
+        self.lbl_empty_devices = QLabel("Click 'Refresh Scan' to search your local network for active DogRemote hosts.")
+        self.lbl_empty_devices.setStyleSheet("color: #94a3b8; font-size: 13px; font-weight: 500;")
         self.lbl_empty_devices.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_empty_devices.setWordWrap(True)
         empty_layout.addWidget(self.lbl_empty_devices)
@@ -1575,7 +1577,7 @@ class LanCastMainWindow(QMainWindow):
         if self.discovery and not self.discovery.is_scanning:
             self.btn_rescan.setText("Scanning...")
             self.btn_rescan.setEnabled(False)
-            self.lbl_empty_devices.setText("Scanning local subnet for active LanCast hosts...")
+            self.lbl_empty_devices.setText("Scanning local subnet for active DogRemote hosts...")
             self.discovery.scan_subnet(
                 target_ports=[5858, 5859, 5860],
                 on_complete=lambda: self.bridge.scan_finished.emit()
@@ -1586,7 +1588,7 @@ class LanCastMainWindow(QMainWindow):
         self.btn_rescan.setEnabled(True)
         devices = self.discovery.get_devices()
         if not devices:
-            self.lbl_empty_devices.setText("Scan completed. No other hosts detected on this subnet.")
+            self.lbl_empty_devices.setText("Scan completed. No other DogRemote hosts detected on this subnet.")
             self.empty_state_frame.setVisible(True)
 
     def prefill_and_connect(self, ip: str, port: int):
