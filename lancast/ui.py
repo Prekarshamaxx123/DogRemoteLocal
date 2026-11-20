@@ -36,9 +36,8 @@ if not os.path.exists(PUBLIC_DIR):
 APP_ICON = os.path.join(PUBLIC_DIR, 'icon.png').replace('\\', '/')
 
 def generate_random_password(length=6):
-    """Generate clean, human-readable random password without ambiguous characters."""
-    chars = "23456789abcdefghijkmnpqrstuvwxyz"
-    return "".join(random.choice(chars) for _ in range(length))
+    """Generate clean, 6-digit numeric random password."""
+    return f"{random.randint(100000, 999999)}"
 
 # ========================================================
 # Ultra-Modern Professional Dark Theme (Deep Slate / Violet)
@@ -1073,6 +1072,7 @@ class LanCastMainWindow(QMainWindow):
         pwd_box.addWidget(self.chk_require_pwd)
 
         self.txt_host_pwd = QLineEdit(self.default_password)
+        self.txt_host_pwd.setMaxLength(6)
         self.txt_host_pwd.setEchoMode(QLineEdit.EchoMode.Normal)
         self.txt_host_pwd.setMaximumWidth(110)
         self.txt_host_pwd.setStyleSheet("font-family: monospace; font-size: 13px; font-weight: bold; text-align: center;")
@@ -1178,7 +1178,8 @@ class LanCastMainWindow(QMainWindow):
         pwd_client_box = QHBoxLayout()
         pwd_client_box.setSpacing(8)
         self.txt_client_pwd = QLineEdit()
-        self.txt_client_pwd.setPlaceholderText("Host Password (leave blank if host has none)")
+        self.txt_client_pwd.setMaxLength(6)
+        self.txt_client_pwd.setPlaceholderText("6-digit Host Password (if required)")
         self.txt_client_pwd.setEchoMode(QLineEdit.EchoMode.Password)
         self.txt_client_pwd.returnPressed.connect(self.connect_to_target)
         pwd_client_box.addWidget(self.txt_client_pwd, stretch=1)
@@ -1654,7 +1655,8 @@ class LanCastMainWindow(QMainWindow):
             inp_row = QHBoxLayout()
             inp_row.setSpacing(8)
             txt_p = QLineEdit()
-            txt_p.setPlaceholderText("Enter host password")
+            txt_p.setMaxLength(6)
+            txt_p.setPlaceholderText("Enter 6-digit password")
             txt_p.setEchoMode(QLineEdit.EchoMode.Password)
             inp_row.addWidget(txt_p, stretch=1)
 

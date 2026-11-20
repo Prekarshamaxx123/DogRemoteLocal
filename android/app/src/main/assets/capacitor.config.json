@@ -1,0 +1,12 @@
+{
+	"appId": "com.omnidesk.lan",
+	"appName": "OmniDesk LAN",
+	"webDir": "public",
+	"server": {
+		"androidScheme": "https",
+		"cleartext": true
+	},
+	"android": {
+		"allowMixedContent": true
+	}
+}

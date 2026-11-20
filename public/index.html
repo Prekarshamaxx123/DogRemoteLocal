@@ -134,7 +134,7 @@
                         </button>
                     </div>
                     <div class="password-input-row" style="margin-top: 8px;">
-                        <input type="password" id="remotePasswordInput" placeholder="Host Password (if required)" class="form-input" style="width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #fff; font-size: 13px;">
+                        <input type="password" id="remotePasswordInput" maxlength="6" placeholder="6-digit Host Password (if required)" class="form-input" style="width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; color: #fff; font-size: 13px;">
                     </div>
                 </div>
 
@@ -180,6 +180,14 @@
                     <div class="stat-pill" id="fpsStat">
                         <span class="stat-val" id="statFpsVal">60 FPS</span>
                     </div>
+                    <!-- Multi-Screen Switcher Dropdown -->
+                    <div class="screen-select-pill" style="display: flex; align-items: center; gap: 4px; background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.12);">
+                        <label for="viewerScreenSelect" style="font-size: 11px; font-weight: 700; color: #94a3b8;">Screen:</label>
+                        <select id="viewerScreenSelect" style="background: transparent; color: #fff; border: none; font-size: 11px; font-weight: 600; outline: none; cursor: pointer;">
+                            <option value="all">All Displays</option>
+                            <option value="0">Display 1</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="viewer-actions">
@@ -205,7 +213,8 @@
 
             <!-- Video Player Surface -->
             <div class="video-wrapper" id="videoWrapper">
-                <video id="remoteVideo" autoplay playsinline></video>
+                <img id="remoteFrame" style="width: 100%; height: 100%; object-fit: contain; display: block;" alt="Live Stream">
+                <video id="remoteVideo" autoplay playsinline style="display: none;"></video>
                 <!-- Touch virtual cursor for mobile / tablet -->
                 <div id="virtualCursor" class="virtual-cursor" style="display: none;"></div>
             </div>
@@ -284,6 +293,22 @@
                     <button class="btn-copy" id="btnCopyUrl" title="Copy URL">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6-Digit Password Authentication Modal -->
+        <div class="modal-overlay" id="passwordModal" style="display: none;">
+            <div class="modal-card" style="max-width: 380px; text-align: center; padding: 24px;">
+                <h3 id="pwdModalTitle" style="margin-bottom: 8px;">Authentication Required</h3>
+                <p id="pwdModalMsg" style="color: #94a3b8; font-size: 13px; margin-bottom: 16px;">This host requires a 6-digit security password.</p>
+                <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                    <input type="password" id="pwdModalInput" maxlength="6" placeholder="6-digit Password" style="flex: 1; padding: 10px 14px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #fff; font-size: 16px; text-align: center; font-weight: bold; letter-spacing: 2px;">
+                    <button id="btnTogglePwdModalMask" class="btn-secondary" style="padding: 10px 14px; font-size: 12px;">Show</button>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button id="btnCancelPwdModal" class="btn-modal btn-reject">Cancel</button>
+                    <button id="btnSubmitPwdModal" class="btn-modal btn-accept">Submit</button>
                 </div>
             </div>
         </div>
