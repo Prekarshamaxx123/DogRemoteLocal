@@ -1,142 +1,133 @@
-# ⚡ LanCast Pro - Ultra-Fast Same-Network Screen Sharing & Remote Desktop
+# LanCast Pro
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![GUI](https://img.shields.io/badge/GUI-PyQt6-green.svg)](https://riverbankcomputing.com/software/pyqt/)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-orange.svg)](#cross-platform-packages)
-[![Latency](https://img.shields.io/badge/LAN%20Latency-~1.1ms-brightgreen.svg)](#performance)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+**Ultra-fast, zero-cloud peer-to-peer screen sharing and remote desktop engineered exclusively for local area networks (Wi-Fi and Ethernet).**
 
-> **High-performance, ultra-low-latency screen sharing and remote desktop engine designed exclusively for local networks (Wi-Fi / Ethernet).**
->
-> 100% Native C++/Qt6 pipeline, Direct TCP binary socket framing, and zero cloud dependency.
+Delivers native 60 FPS streaming with ultra-low latency (~1.1 ms round-trip time) over pure TCP sockets, full remote keyboard and mouse control, multi-monitor switching, and end-to-end local security.
 
 ---
 
-## 🌟 Key Features
+## Screenshots
 
-* **⚡ Ultra-Low Latency (~1.1 ms RTT)**: Monotonic clock ping-pong engine with 512KB tuned socket buffers delivering fluid 60 FPS streams at 100% native display resolution.
-* **🖥️ Multi-Display Support**: Stream individual monitors or a unified multi-screen canvas. Switch active displays in real-time from the remote viewer.
-* **🛡️ Security & Authentication**:
-  * Real-time connection approval modals (Accept / Decline with fine-grained permissions).
-  * Dynamic random password generation with viewer authentication modal.
-  * 100% peer-to-peer over local network; zero data leaves your local Wi-Fi.
-* **🖱️ Full Remote Control**: Mouse tracking, left/right/middle clicks, mouse wheel scrolling, keyboard simulation, and bidirectional clipboard synchronization.
-* **🔍 Auto-Discovery**: Automatic LAN peer detection using UDP broadcast and mDNS/Zeroconf beacons—no manual IP configuration needed.
-* **📱 Mobile Companion (Android & iOS)**:
-  * Native Android APK with mobile modifier keys toolbar (`Ctrl`, `Alt`, `Shift`, `Esc`, `Tab`, `Win`, and arrow keys).
-  * Instant QR code connection for mobile browsers without app installation.
-* **🎨 Sleek Dark Modern Interface**: Clean professional UI built with native PyQt6 widgets and high-contrast HUD statistics (ms, FPS, resolution).
+<div align="center">
 
----
+### Main Dashboard & Local Network Discovery
+![LanCast Dashboard](docs/images/dashboard.png)
 
-## 🏗️ Architecture
+### Floating Viewer HUD & Multi-Display Controls
+![LanCast Viewer HUD](docs/images/viewer_hud.png)
 
-```mermaid
-flowchart LR
-    subgraph Host ["Host Device (Server)"]
-        CAP["Screen Capture\n(MSS / X11)"] --> COMP["JPEG / TurboJPEG\nCompression"]
-        COMP --> SVR["TCP Server\n(Port 5858)"]
-        INP["Input Simulator\n(xdotool / pynput)"] <-- SVR
-    end
+### Active High-Resolution Remote Desktop Session
+![LanCast Remote Session](docs/images/remote_session.png)
 
-    subgraph Discovery ["Local Network (LAN)"]
-        BEACON["UDP Broadcast Beacon\n(Port 5859)"]
-        DISC["Auto-Discovery\nEngine"]
-    end
-
-    subgraph Client ["Client Device (Viewer)"]
-        CLI["TCP Client & Buffer"] --> DEC["Fast QPixmap\nDecoder"]
-        DEC --> UI["Sleek PyQt6\nViewer HUD"]
-        EVT["Mouse / Key\nEvent Filter"] --> CLI
-    end
-
-    BEACON <--> DISC
-    SVR <== "Direct TCP Stream (~1.1ms RTT)" ==> CLI
-```
+</div>
 
 ---
 
-## 📦 Cross-Platform Packages
+## Download & Installation
 
-Ready-to-use binaries are built in the [`dist/`](dist/) folder:
+Get precompiled releases for your operating system directly from [GitHub Releases](https://github.com/USER/REPO/releases/latest).
 
-| Operating System | Package Format | Installation / Execution |
-| :--- | :--- | :--- |
-| **Universal Linux** | `.AppImage` | `chmod +x LanCast-1.0.0.AppImage && ./LanCast-1.0.0.AppImage` |
-| **Arch Linux / Manjaro** | `.pkg.tar.zst` | `sudo pacman -U lancast-1.0.0-1-x86_64.pkg.tar.zst` |
-| **Debian / Ubuntu / Kali** | `.deb` | `sudo dpkg -i lancast_1.0.0_amd64.deb` |
-| **Linux Standalone** | `.tar.gz` | `tar -xzf LanCast-1.0.0-linux-x86_64.tar.gz && ./usr/bin/lancast` |
-| **Android** | `.apk` | Transfer and install `LanCast-1.0.0.apk` on phone |
-| **Windows** | `.exe` | Run `scripts\build-windows.bat` on Windows |
-| **macOS** | `.dmg` | Run `./scripts/build-mac.sh` on macOS |
+> Replace `USER/REPO` with your repository path when publishing.
+
+### Direct Download Endpoints
+
+| Platform | Package Format | Direct Download URL | Installation / Run Command |
+| :--- | :--- | :--- | :--- |
+| **Linux (Universal)** | Standalone AppImage | [`LanCast-1.0.0.AppImage`](https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0.AppImage) | `chmod +x LanCast-1.0.0.AppImage && ./LanCast-1.0.0.AppImage` |
+| **Arch Linux / Manjaro** | Pacman Package | [`lancast-1.0.0-1-x86_64.pkg.tar.zst`](https://github.com/USER/REPO/releases/latest/download/lancast-1.0.0-1-x86_64.pkg.tar.zst) | `sudo pacman -U lancast-1.0.0-1-x86_64.pkg.tar.zst` |
+| **Debian / Ubuntu / Kali** | Debian Package | [`lancast_1.0.0_amd64.deb`](https://github.com/USER/REPO/releases/latest/download/lancast_1.0.0_amd64.deb) | `sudo dpkg -i lancast_1.0.0_amd64.deb` |
+| **Linux Portable** | Standalone Tarball | [`LanCast-1.0.0-linux-x86_64.tar.gz`](https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0-linux-x86_64.tar.gz) | `tar -xzf LanCast-1.0.0-linux-x86_64.tar.gz && ./usr/bin/lancast` |
+| **Windows 10 / 11** | Portable Executable | [`LanCast-Portable.exe`](https://github.com/USER/REPO/releases/latest/download/LanCast-Portable.exe) | Double-click to launch (No installation required) |
+| **macOS (Apple / Intel)** | Disk Image | [`LanCast-1.0.0.dmg`](https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0.dmg) | Open DMG and drag LanCast to Applications |
+| **Android (Phone / Tablet)**| Native Android APK | [`LanCast-1.0.0.apk`](https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0.apk) | Download and install APK on your Android device |
 
 ---
 
-## 🚀 Quick Start (Running from Source)
+## Operating System Setup Guides
 
-### 1. Prerequisites
-- Python 3.10 or newer
-- Linux dependencies (Debian/Ubuntu/Kali):
+### 🐧 Linux (AppImage & Native Packages)
+* **AppImage**: Works out-of-the-box across Ubuntu, Debian, Fedora, Arch, openSUSE, and CentOS:
   ```bash
-  sudo apt install -y python3-pyqt6 xdotool
+  wget https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0.AppImage
+  chmod +x LanCast-1.0.0.AppImage
+  ./LanCast-1.0.0.AppImage
+  ```
+* **Arch Linux / Manjaro**:
+  ```bash
+  wget https://github.com/USER/REPO/releases/latest/download/lancast-1.0.0-1-x86_64.pkg.tar.zst
+  sudo pacman -U lancast-1.0.0-1-x86_64.pkg.tar.zst
+  ```
+* **Debian / Ubuntu / Kali**:
+  ```bash
+  wget https://github.com/USER/REPO/releases/latest/download/lancast_1.0.0_amd64.deb
+  sudo dpkg -i lancast_1.0.0_amd64.deb
   ```
 
-### 2. Install Python Dependencies
+### 🪟 Windows (10 & 11)
+1. Download `LanCast-Portable.exe`.
+2. Double-click the file to open the dashboard immediately.
+3. If prompted by Windows Defender SmartScreen, select **More info** -> **Run anyway**.
+
+### 🍎 macOS
+1. Download `LanCast-1.0.0.dmg`.
+2. Double-click to mount and drag `LanCast.app` into your **Applications** folder.
+3. Grant **Screen Recording** and **Accessibility** permissions in macOS *System Settings > Privacy & Security* when prompted to enable capture and input simulation.
+
+### 📱 Android
+1. Download `LanCast-1.0.0.apk` to your phone or tablet.
+2. Tap the downloaded file to install (allow "Install unknown apps" if prompted).
+3. Open the app to view and control your desktop screens using touch gestures and the virtual shortcut toolbar.
+4. *Alternative*: Connect from any mobile device without installing anything by simply scanning the desktop dashboard QR code with your camera.
+
+---
+
+## Key Features
+
+### 🚀 Ultra-Low Latency Performance
+* **1.1 ms Network Latency**: Uses dedicated monotonic ping-pong RTT tracking and 512 KB socket buffers to prevent buffer bloat and queue congestion.
+* **Native 60 FPS Display**: Hardware-accelerated Qt6 paint pipeline ensures smooth, high-frame-rate desktop rendering at full native display resolution.
+* **Zero Cloud Dependence**: Operates strictly within your local Wi-Fi or wired network. No remote relays, no external servers, and zero internet bandwidth consumed.
+
+### 🖥️ Multi-Monitor Workflow
+* **Flexible Display Views**: Stream monitor 1, monitor 2, or a unified multi-screen canvas covering all attached displays.
+* **Live In-Session Switching**: Switch between screens dynamically via the dropdown in the floating viewer toolbar without disconnecting.
+
+### 🖱️ Complete Remote Control
+* **Mouse Simulation**: High-precision pointer tracking, primary/secondary/middle clicks, and mouse wheel scrolling.
+* **Typing & Keyboard Shortcuts**: Full remote keystroke handling including function keys, modifier combos, and direct text input.
+* **Bidirectional Clipboard**: Automatically synchronizes clipboard text between host and viewer in real time.
+
+### 🛡️ Local Security & Access Management
+* **Interactive Authorization**: When a remote peer connects, the host receives an approval dialog allowing them to accept or decline the session.
+* **Fine-Grained Permissions**: Enable or disable remote mouse/keyboard control and audio streaming on a per-session basis.
+* **Dynamic Security Passwords**: Generate random one-time session passwords or set custom passwords with password visibility toggles.
+
+### 🔍 Seamless LAN Discovery
+* **Auto-Discovery Beacon**: Automatically detects other active LanCast machines on your subnet using UDP broadcast and mDNS.
+* **On-Demand Refresh**: Scan your subnet whenever needed with the dedicated refresh button, keeping network traffic minimal.
+* **9-Digit Device Address**: Connect with a clean 9-digit address (e.g. `192 168 008 194`) or direct IP.
+
+### 📱 Mobile Virtual Keyboard & Modifier Bar
+* **Special Keys Toolbar**: Includes dedicated buttons for `Ctrl`, `Alt`, `Shift`, `Esc`, `Tab`, `Win`, and navigation arrows directly on the mobile interface.
+* **Virtual Trackpad**: Control the desktop cursor smoothly with touch taps, double taps, and drag gestures.
+
+---
+
+## Building from Source (Developers Only)
+
+If you prefer building packages locally instead of downloading from Releases:
+
 ```bash
+# Clone the repository
+git clone https://github.com/USER/REPO.git
+cd REPO
+
+# Install Python requirements
 pip install -r requirements.txt
-```
 
-### 3. Launch LanCast
-```bash
+# Run the native application
 python3 main.py
-```
 
----
-
-## 🛠️ Build Scripts
-
-Use the unified multi-platform build script to compile for various targets:
-
-```bash
-# Build Universal Linux AppImage, Debian .deb, Arch package, and Android APK:
+# Build all distribution packages (Linux AppImage, Debian .deb, Arch pkg, Android APK)
 ./scripts/build-all.sh all
-
-# Build only Android APK:
-./scripts/build-all.sh android
-
-# Build only Arch Linux package (.pkg.tar.zst):
-./scripts/build-all.sh arch
-
-# Build only Debian / Ubuntu package (.deb):
-./scripts/build-all.sh deb
-
-# Build only Linux AppImage:
-./scripts/build-all.sh linux
 ```
-
-### Building on Windows
-Open Command Prompt in the repository folder and execute:
-```cmd
-scripts\build-windows.bat
-```
-
-### Building on macOS
-In Terminal:
-```bash
-chmod +x scripts/build-mac.sh
-./scripts/build-mac.sh
-```
-
----
-
-## 🔒 Security Model
-
-1. **Interactive Consent**: Connections are refused unless the host accepts the prompt or validates against the optional host password.
-2. **Strictly Local Communication**: All audio, video, clipboard, and input data remain strictly inside your private subnet.
-3. **No External Servers**: Zero reliance on third-party STUN/TURN, signaling, or telemetry servers.
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
