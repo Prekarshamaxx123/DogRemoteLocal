@@ -1,4 +1,4 @@
-# LanCast Pro
+# 🐕 DogRemoteLocal
 
 **Ultra-fast, zero-cloud peer-to-peer screen sharing and remote desktop engineered exclusively for local area networks (Wi-Fi and Ethernet).**
 
@@ -11,13 +11,13 @@ Delivers native 60 FPS streaming with ultra-low latency (~1.1 ms round-trip time
 <div align="center">
 
 ### Main Dashboard & Local Network Discovery
-![LanCast Dashboard](docs/images/dashboard.png)
+![DogRemoteLocal Dashboard](docs/images/dashboard.png)
 
 ### Floating Viewer HUD & Multi-Display Controls
-![LanCast Viewer HUD](docs/images/viewer_hud.png)
+![DogRemoteLocal Viewer HUD](docs/images/viewer_hud.png)
 
 ### Active High-Resolution Remote Desktop Session
-![LanCast Remote Session](docs/images/remote_session.png)
+![DogRemoteLocal Remote Session](docs/images/remote_session.png)
 
 </div>
 
@@ -25,21 +25,19 @@ Delivers native 60 FPS streaming with ultra-low latency (~1.1 ms round-trip time
 
 ## Download & Installation
 
-Get precompiled releases for your operating system directly from [GitHub Releases](https://github.com/USER/REPO/releases/latest).
-
-> Replace `USER/REPO` with your repository path when publishing.
+Get precompiled releases for your operating system directly from [GitHub Releases](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest).
 
 ### Direct Download Endpoints
 
 | Platform | Package Format | Direct Download URL | Installation / Run Command |
 | :--- | :--- | :--- | :--- |
-| **Linux (Universal)** | Standalone AppImage | [`LanCast-1.0.0.AppImage`](https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0.AppImage) | `chmod +x LanCast-1.0.0.AppImage && ./LanCast-1.0.0.AppImage` |
-| **Arch Linux / Manjaro** | Pacman Package | [`lancast-1.0.0-1-x86_64.pkg.tar.zst`](https://github.com/USER/REPO/releases/latest/download/lancast-1.0.0-1-x86_64.pkg.tar.zst) | `sudo pacman -U lancast-1.0.0-1-x86_64.pkg.tar.zst` |
-| **Debian / Ubuntu / Kali** | Debian Package | [`lancast_1.0.0_amd64.deb`](https://github.com/USER/REPO/releases/latest/download/lancast_1.0.0_amd64.deb) | `sudo dpkg -i lancast_1.0.0_amd64.deb` |
-| **Linux Portable** | Standalone Tarball | [`LanCast-1.0.0-linux-x86_64.tar.gz`](https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0-linux-x86_64.tar.gz) | `tar -xzf LanCast-1.0.0-linux-x86_64.tar.gz && ./usr/bin/lancast` |
-| **Windows 10 / 11** | Portable Executable | [`LanCast-Portable.exe`](https://github.com/USER/REPO/releases/latest/download/LanCast-Portable.exe) | Double-click to launch (No installation required) |
-| **macOS (Apple / Intel)** | Disk Image | [`LanCast-1.0.0.dmg`](https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0.dmg) | Open DMG and drag LanCast to Applications |
-| **Android (Phone / Tablet)**| Native Android APK | [`LanCast-1.0.0.apk`](https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0.apk) | Download and install APK on your Android device |
+| **Linux (Universal)** | Standalone AppImage | [`DogRemote-1.0.0.AppImage`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.AppImage) | `chmod +x DogRemote-1.0.0.AppImage && ./DogRemote-1.0.0.AppImage` |
+| **Arch Linux / Manjaro** | Pacman Package | [`dogremote-1.0.0-1-x86_64.pkg.tar.zst`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote-1.0.0-1-x86_64.pkg.tar.zst) | `sudo pacman -U dogremote-1.0.0-1-x86_64.pkg.tar.zst` |
+| **Debian / Ubuntu / Kali** | Debian Package | [`dogremote_1.0.0_amd64.deb`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote_1.0.0_amd64.deb) | `sudo dpkg -i dogremote_1.0.0_amd64.deb` |
+| **Linux Portable** | Standalone Tarball | [`DogRemote-1.0.0-linux-x86_64.tar.gz`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0-linux-x86_64.tar.gz) | `tar -xzf DogRemote-1.0.0-linux-x86_64.tar.gz && ./usr/bin/lancast` |
+| **Windows 10 / 11** | Portable Executable | [`DogRemote-Portable.exe`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-Portable.exe) | Double-click to launch (No installation required) |
+| **macOS (Apple / Intel)** | Disk Image | [`DogRemote-1.0.0.dmg`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.dmg) | Open DMG and drag DogRemote to Applications |
+| **Android (Phone / Tablet)**| Native Android APK | [`DogRemote-1.0.0.apk`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.apk) | Download and install APK on your Android device |
 
 ---
 
@@ -48,33 +46,33 @@ Get precompiled releases for your operating system directly from [GitHub Release
 ### 🐧 Linux (AppImage & Native Packages)
 * **AppImage**: Works out-of-the-box across Ubuntu, Debian, Fedora, Arch, openSUSE, and CentOS:
   ```bash
-  wget https://github.com/USER/REPO/releases/latest/download/LanCast-1.0.0.AppImage
-  chmod +x LanCast-1.0.0.AppImage
-  ./LanCast-1.0.0.AppImage
+  wget https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.AppImage
+  chmod +x DogRemote-1.0.0.AppImage
+  ./DogRemote-1.0.0.AppImage
   ```
 * **Arch Linux / Manjaro**:
   ```bash
-  wget https://github.com/USER/REPO/releases/latest/download/lancast-1.0.0-1-x86_64.pkg.tar.zst
-  sudo pacman -U lancast-1.0.0-1-x86_64.pkg.tar.zst
+  wget https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote-1.0.0-1-x86_64.pkg.tar.zst
+  sudo pacman -U dogremote-1.0.0-1-x86_64.pkg.tar.zst
   ```
 * **Debian / Ubuntu / Kali**:
   ```bash
-  wget https://github.com/USER/REPO/releases/latest/download/lancast_1.0.0_amd64.deb
-  sudo dpkg -i lancast_1.0.0_amd64.deb
+  wget https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote_1.0.0_amd64.deb
+  sudo dpkg -i dogremote_1.0.0_amd64.deb
   ```
 
 ### 🪟 Windows (10 & 11)
-1. Download `LanCast-Portable.exe`.
+1. Download `DogRemote-Portable.exe`.
 2. Double-click the file to open the dashboard immediately.
 3. If prompted by Windows Defender SmartScreen, select **More info** -> **Run anyway**.
 
 ### 🍎 macOS
-1. Download `LanCast-1.0.0.dmg`.
-2. Double-click to mount and drag `LanCast.app` into your **Applications** folder.
+1. Download `DogRemote-1.0.0.dmg`.
+2. Double-click to mount and drag `DogRemote.app` into your **Applications** folder.
 3. Grant **Screen Recording** and **Accessibility** permissions in macOS *System Settings > Privacy & Security* when prompted to enable capture and input simulation.
 
 ### 📱 Android
-1. Download `LanCast-1.0.0.apk` to your phone or tablet.
+1. Download `DogRemote-1.0.0.apk` to your phone or tablet.
 2. Tap the downloaded file to install (allow "Install unknown apps" if prompted).
 3. Open the app to view and control your desktop screens using touch gestures and the virtual shortcut toolbar.
 4. *Alternative*: Connect from any mobile device without installing anything by simply scanning the desktop dashboard QR code with your camera.
@@ -103,7 +101,7 @@ Get precompiled releases for your operating system directly from [GitHub Release
 * **Dynamic Security Passwords**: Generate random one-time session passwords or set custom passwords with password visibility toggles.
 
 ### 🔍 Seamless LAN Discovery
-* **Auto-Discovery Beacon**: Automatically detects other active LanCast machines on your subnet using UDP broadcast and mDNS.
+* **Auto-Discovery Beacon**: Automatically detects other active DogRemote machines on your subnet using UDP broadcast and mDNS.
 * **On-Demand Refresh**: Scan your subnet whenever needed with the dedicated refresh button, keeping network traffic minimal.
 * **9-Digit Device Address**: Connect with a clean 9-digit address (e.g. `192 168 008 194`) or direct IP.
 
@@ -119,8 +117,8 @@ If you prefer building packages locally instead of downloading from Releases:
 
 ```bash
 # Clone the repository
-git clone https://github.com/USER/REPO.git
-cd REPO
+git clone https://github.com/Prekarshamaxx123/DogRemoteLocal.git
+cd DogRemoteLocal
 
 # Install Python requirements
 pip install -r requirements.txt
