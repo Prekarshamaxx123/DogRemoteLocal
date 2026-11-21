@@ -3,7 +3,7 @@
 	"appName": "DogRemote Local",
 	"webDir": "public",
 	"server": {
-		"androidScheme": "https",
+		"androidScheme": "http",
 		"cleartext": true
 	},
 	"android": {

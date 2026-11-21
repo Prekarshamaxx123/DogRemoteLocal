@@ -1,4 +1,4 @@
-package com.omnidesk.lan;
+package com.dogremote.local;
 
 import com.getcapacitor.BridgeActivity;
 

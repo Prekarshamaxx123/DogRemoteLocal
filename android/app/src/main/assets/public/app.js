@@ -166,28 +166,37 @@
         if (!el.viewerScreenSelect) return;
         el.viewerScreenSelect.innerHTML = '';
 
-        if (screens && screens.length > 1) {
+        if (!screens || screens.length === 0) {
+            const opt1 = document.createElement('option');
+            opt1.value = '0';
+            opt1.textContent = 'Display 1';
+            el.viewerScreenSelect.appendChild(opt1);
+            return;
+        }
+
+        // Check if screens already contains the 'all' / -1 entry
+        const hasAll = screens.some(s => s.id === -1 || s.id === 'all');
+        if (!hasAll && screens.length > 1) {
             const optAll = document.createElement('option');
             optAll.value = 'all';
             optAll.textContent = 'All Connected Displays (Canvas)';
             el.viewerScreenSelect.appendChild(optAll);
         }
 
-        if (screens && screens.length > 0) {
-            screens.forEach((s, i) => {
-                const opt = document.createElement('option');
-                opt.value = String(i);
-                opt.textContent = `Display ${i + 1} (${s.width}x${s.height})`;
-                el.viewerScreenSelect.appendChild(opt);
-            });
-        } else {
-            const opt1 = document.createElement('option');
-            opt1.value = '0';
-            opt1.textContent = 'Display 1';
-            el.viewerScreenSelect.appendChild(opt1);
-        }
+        screens.forEach((s, i) => {
+            const opt = document.createElement('option');
+            const val = (s.id !== undefined) ? String(s.id) : String(i);
+            opt.value = (val === '-1') ? 'all' : val;
+            let label = s.name;
+            if (!label) {
+                const res = (s.width && s.height) ? ` (${s.width}x${s.height})` : '';
+                label = `Display ${i + 1}${res}`;
+            }
+            opt.textContent = label;
+            el.viewerScreenSelect.appendChild(opt);
+        });
 
-        el.viewerScreenSelect.value = (activeScreen === -1) ? 'all' : String(activeScreen);
+        el.viewerScreenSelect.value = (activeScreen === -1 || activeScreen === 'all') ? 'all' : String(activeScreen);
     }
 
     function startMetrics() {
