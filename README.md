@@ -23,40 +23,26 @@ Delivers native 60 FPS streaming with ultra-low latency (~1.1 ms round-trip time
 
 ---
 
-## Download & Installation
+## Download & Run
 
-Get precompiled releases for your operating system directly from [GitHub Releases](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest).
+Get the latest universal standalone AppImage directly from [GitHub Releases](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest).
 
-### Direct Download Endpoints
+### Direct Download Endpoint
 
-| Platform | Package Format | Direct Download URL | Installation / Run Command |
+| Platform | Package Format | Direct Download URL | Run Command |
 | :--- | :--- | :--- | :--- |
 | **Linux (Universal)** | Standalone AppImage | [`DogRemote-1.0.0.AppImage`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.AppImage) | `chmod +x DogRemote-1.0.0.AppImage && ./DogRemote-1.0.0.AppImage` |
-| **Arch Linux / Manjaro** | Pacman Package | [`dogremote-1.0.0-1-x86_64.pkg.tar.zst`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote-1.0.0-1-x86_64.pkg.tar.zst) | `sudo pacman -U dogremote-1.0.0-1-x86_64.pkg.tar.zst` |
-| **Debian / Ubuntu / Kali** | Debian Package | [`dogremote_1.0.0_amd64.deb`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote_1.0.0_amd64.deb) | `sudo dpkg -i dogremote_1.0.0_amd64.deb` |
-| **Linux Portable** | Standalone Tarball | [`DogRemote-1.0.0-linux-x86_64.tar.gz`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0-linux-x86_64.tar.gz) | `tar -xzf DogRemote-1.0.0-linux-x86_64.tar.gz && ./usr/bin/dogremote` |
 
 ---
 
-## Operating System Setup Guides
+## Quick Start Guide
 
-### 🐧 Linux (AppImage & Native Packages)
-* **AppImage**: Works out-of-the-box across Ubuntu, Debian, Fedora, Arch, openSUSE, and CentOS/Kali:
-  ```bash
-  wget https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.AppImage
-  chmod +x DogRemote-1.0.0.AppImage
-  ./DogRemote-1.0.0.AppImage
-  ```
-* **Arch Linux / Manjaro**:
-  ```bash
-  wget https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote-1.0.0-1-x86_64.pkg.tar.zst
-  sudo pacman -U dogremote-1.0.0-1-x86_64.pkg.tar.zst
-  ```
-* **Debian / Ubuntu / Kali**:
-  ```bash
-  wget https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/dogremote_1.0.0_amd64.deb
-  sudo dpkg -i dogremote_1.0.0_amd64.deb
-  ```
+Works out-of-the-box across Ubuntu, Debian, Fedora, Arch, openSUSE, and Kali Linux without installation:
+```bash
+wget https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.AppImage
+chmod +x DogRemote-1.0.0.AppImage
+./DogRemote-1.0.0.AppImage
+```
 
 ---
 
@@ -103,6 +89,6 @@ pip install -r requirements.txt
 # Run the native application
 python3 main.py
 
-# Build all Linux distribution packages (AppImage, Debian .deb, Arch pkg, Tar.gz)
-./scripts/build-all.sh all
+# Build the standalone Universal Linux AppImage
+./scripts/build-all.sh appimage
 ```
