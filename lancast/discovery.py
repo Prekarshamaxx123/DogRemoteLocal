@@ -143,7 +143,7 @@ class LanDiscovery:
     def _probe_peer(self, ip: str, port: int):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.20)  # ultra-fast check (200ms)
+            s.settimeout(0.35)  # reliable check over Wi-Fi (350ms)
             res = s.connect_ex((ip, port))
             s.close()
             if res == 0:

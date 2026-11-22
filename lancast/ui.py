@@ -1273,6 +1273,7 @@ class LanCastMainWindow(QMainWindow):
         self.server.on_clipboard_received = lambda txt: self.bridge.clipboard_received.emit(txt)
         self.server.on_screen_switch_requested = lambda sid: self.bridge.screen_switch_requested.emit(sid)
         self.server.on_quality_switch_requested = self.on_quality_selected
+        self.server.on_peer_detected = lambda ip, name, port: self.discovery._register_device(ip=ip, name=name, port=port) if self.discovery else None
         self.update_available_screens()
         self.server.start()
         

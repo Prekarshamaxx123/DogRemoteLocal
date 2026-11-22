@@ -45,7 +45,7 @@
                 <div class="form-group">
                     <label class="input-label" for="remotePinInput">HOST PASSWORD (OPTIONAL - WILL PROMPT IF REQUIRED)</label>
                     <div class="input-wrapper">
-                        <input type="password" id="remotePinInput" class="text-input pin-input" placeholder="6-digit Host Password" maxlength="6" inputmode="numeric" pattern="[0-9]*">
+                        <input type="password" id="remotePinInput" class="text-input pin-input" placeholder="Enter 6-digit PIN" maxlength="6" inputmode="numeric" pattern="[0-9]*">
                         <button type="button" id="togglePinVisibilityBtn" class="btn-input-action" title="Toggle Password Visibility">Show</button>
                     </div>
                 </div>
@@ -188,9 +188,6 @@
                     </div>
                 </div>
                 <div class="hud-right">
-                    <button type="button" id="hudKeyboardToggleBtn" class="btn-hud btn-hud-kb" title="Toggle On-Screen Keyboard">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" ry="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M6 12h.001M10 12h.001M14 12h.001M18 12h.001M7 16h10"/></svg>
-                    </button>
                     <button type="button" id="hudFullscreenBtn" class="btn-hud" title="Toggle Fullscreen">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                     </button>
@@ -210,6 +207,9 @@
                 <button type="button" id="triggerNativeKeyboardBtn" class="vkey vkey-keyboard-prominent" title="Open Keyboard">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2" ry="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M6 12h.001M10 12h.001M14 12h.001M18 12h.001M7 16h10"/></svg>
                     <span>KEYBOARD</span>
+                </button>
+                <button type="button" id="toggleTouchModeBtn" class="vkey vkey-mode" title="Toggle Touch vs Mouse Trackpad">
+                    <span id="touchModeLabel">👆 Touch</span>
                 </button>
                 <button type="button" class="vkey" data-key="Escape">Esc</button>
                 <button type="button" class="vkey" data-key="Tab">Tab</button>

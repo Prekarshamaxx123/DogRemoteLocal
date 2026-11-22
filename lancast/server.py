@@ -87,6 +87,7 @@ class LanCastServer:
         self.on_clipboard_received = None# fn(text: str)
         self.on_screen_switch_requested = None  # fn(screen_idx: int)
         self.on_quality_switch_requested = None # fn(quality_idx: int)
+        self.on_peer_detected = None            # fn(ip: str, name: str, port: int)
         
         self.screens_info = []
         self.active_screen_idx = 0
@@ -415,6 +416,12 @@ class LanCastServer:
                 wrapper = WsClientWrapper(websocket, self.ws_loop)
                 self.ws_clients[websocket] = wrapper
                 client_ip = websocket.remote_address[0] if websocket.remote_address else "127.0.0.1"
+                if client_ip and not client_ip.startswith("127."):
+                    if self.on_peer_detected:
+                        try:
+                            self.on_peer_detected(client_ip, client_name, 5859)
+                        except Exception:
+                            pass
                 await websocket.send(json.dumps({
                     "type": "connect_res",
                     "accepted": True,

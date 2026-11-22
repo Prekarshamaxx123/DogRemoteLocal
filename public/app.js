@@ -50,7 +50,8 @@
     // Viewer HUD Elements
     const screenSelect = document.getElementById('screenSelect');
     const hudLatencyText = document.getElementById('hudLatencyText');
-    const hudKeyboardToggleBtn = document.getElementById('hudKeyboardToggleBtn');
+    const toggleTouchModeBtn = document.getElementById('toggleTouchModeBtn');
+    const touchModeLabel = document.getElementById('touchModeLabel');
     const hudFullscreenBtn = document.getElementById('hudFullscreenBtn');
     const hudDisconnectBtn = document.getElementById('hudDisconnectBtn');
     const screenCanvas = document.getElementById('screenCanvas');
@@ -85,6 +86,11 @@
     let longPressTimer = null;
     let lastTapTime = 0;
     let initialTouchDistance = 0;
+    let isTrackpadMode = false;
+    let virtualMouseX = 0.5;
+    let virtualMouseY = 0.5;
+    let prevTouchClientX = 0;
+    let prevTouchClientY = 0;
 
     // Load saved settings
     const savedAddress = localStorage.getItem('dogremote_last_addr') || '';
@@ -457,14 +463,6 @@
             if (idx === activeIdx) opt.selected = true;
             screenSelect.appendChild(opt);
         });
-
-        if (screens.length > 1) {
-            const optAll = document.createElement('option');
-            optAll.value = '-1';
-            optAll.textContent = 'All Displays';
-            if (activeIdx === -1) optAll.selected = true;
-            screenSelect.appendChild(optAll);
-        }
     }
 
     // Display Switcher Change Event
@@ -492,14 +490,14 @@
         }
     });
 
-    // Touch Event Handling
+    // Touch & Trackpad Event Handling
     function getNormalizedCoords(e) {
         const rect = screenCanvas.getBoundingClientRect();
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-        const nx = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-        const ny = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+        const nx = Math.max(0, Math.min(1, (clientX - rect.left) / (rect.width || 1)));
+        const ny = Math.max(0, Math.min(1, (clientY - rect.top) / (rect.height || 1)));
         return { nx, ny };
     }
 
@@ -508,14 +506,24 @@
         
         if (e.touches.length === 1) {
             touchStartTime = Date.now();
+            prevTouchClientX = e.touches[0].clientX;
+            prevTouchClientY = e.touches[0].clientY;
             const { nx, ny } = getNormalizedCoords(e);
             touchStartX = nx;
             touchStartY = ny;
             isLongPress = false;
 
+            if (!isTrackpadMode) {
+                virtualMouseX = nx;
+                virtualMouseY = ny;
+                sendMouseMove(nx, ny);
+            }
+
             longPressTimer = setTimeout(() => {
                 isLongPress = true;
-                sendMouseClick('right', 'click', touchStartX, touchStartY);
+                const targetX = isTrackpadMode ? virtualMouseX : touchStartX;
+                const targetY = isTrackpadMode ? virtualMouseY : touchStartY;
+                sendMouseClick('right', 'click', targetX, targetY);
                 if (navigator.vibrate) navigator.vibrate(50);
             }, 350);
         } else if (e.touches.length === 2) {
@@ -529,12 +537,31 @@
         if (!requestControlCheckbox.checked || !ws || ws.readyState !== WebSocket.OPEN) return;
 
         if (e.touches.length === 1) {
-            const { nx, ny } = getNormalizedCoords(e);
-            const dist = Math.hypot(nx - touchStartX, ny - touchStartY);
-            if (dist > 0.015) {
+            const clientX = e.touches[0].clientX;
+            const clientY = e.touches[0].clientY;
+
+            if (isTrackpadMode) {
+                const rect = screenCanvas.getBoundingClientRect();
+                const deltaX = (clientX - prevTouchClientX) / (rect.width || 1);
+                const deltaY = (clientY - prevTouchClientY) / (rect.height || 1);
+                prevTouchClientX = clientX;
+                prevTouchClientY = clientY;
+
+                virtualMouseX = Math.max(0, Math.min(1, virtualMouseX + deltaX * 1.5));
+                virtualMouseY = Math.max(0, Math.min(1, virtualMouseY + deltaY * 1.5));
+
                 clearTimeout(longPressTimer);
+                sendMouseMove(virtualMouseX, virtualMouseY);
+            } else {
+                const { nx, ny } = getNormalizedCoords(e);
+                const dist = Math.hypot(nx - touchStartX, ny - touchStartY);
+                if (dist > 0.015) {
+                    clearTimeout(longPressTimer);
+                }
+                virtualMouseX = nx;
+                virtualMouseY = ny;
+                sendMouseMove(nx, ny);
             }
-            sendMouseMove(nx, ny);
         } else if (e.touches.length === 2) {
             const currentDy = e.touches[0].clientY - e.touches[1].clientY;
             const delta = currentDy - initialTouchDistance;
@@ -551,17 +578,29 @@
         if (!requestControlCheckbox.checked || !ws || ws.readyState !== WebSocket.OPEN) return;
 
         if (e.changedTouches.length === 1 && !isLongPress) {
-            const { nx, ny } = getNormalizedCoords(e.changedTouches[0]);
-            const dist = Math.hypot(nx - touchStartX, ny - touchStartY);
             const duration = Date.now() - touchStartTime;
+            let movedDist = 0;
+            let clickX = virtualMouseX;
+            let clickY = virtualMouseY;
 
-            if (dist < 0.02 && duration < 300) {
+            if (isTrackpadMode) {
+                const clientX = e.changedTouches[0].clientX;
+                const clientY = e.changedTouches[0].clientY;
+                movedDist = Math.hypot(clientX - prevTouchClientX, clientY - prevTouchClientY);
+            } else {
+                const { nx, ny } = getNormalizedCoords(e.changedTouches[0]);
+                movedDist = Math.hypot(nx - touchStartX, ny - touchStartY);
+                clickX = nx;
+                clickY = ny;
+            }
+
+            if ((isTrackpadMode && duration < 250) || (!isTrackpadMode && movedDist < 0.02 && duration < 300)) {
                 const now = Date.now();
                 if (now - lastTapTime < 280) {
-                    sendMouseClick('left', 'dblclick', nx, ny);
+                    sendMouseClick('left', 'dblclick', clickX, clickY);
                     lastTapTime = 0;
                 } else {
-                    sendMouseClick('left', 'click', nx, ny);
+                    sendMouseClick('left', 'click', clickX, clickY);
                     lastTapTime = now;
                 }
             }
@@ -614,10 +653,20 @@
         showToast('Keyboard Active');
     });
 
-    hudKeyboardToggleBtn.addEventListener('click', () => {
-        hiddenKeyboardInput.focus();
-        showToast('Keyboard Active');
-    });
+    if (toggleTouchModeBtn) {
+        toggleTouchModeBtn.addEventListener('click', () => {
+            isTrackpadMode = !isTrackpadMode;
+            if (isTrackpadMode) {
+                touchModeLabel.textContent = '🖱️ Mouse';
+                toggleTouchModeBtn.classList.add('active-trackpad');
+                showToast('Mouse Trackpad Mode Active');
+            } else {
+                touchModeLabel.textContent = '👆 Touch';
+                toggleTouchModeBtn.classList.remove('active-trackpad');
+                showToast('Direct Touch Mode Active');
+            }
+        });
+    }
 
     hiddenKeyboardInput.addEventListener('input', () => {
         const val = hiddenKeyboardInput.value;
@@ -652,7 +701,9 @@
         discoveredIps.clear();
 
         // Subnet candidates
-        const subnetBase = myDetectedIp ? myDetectedIp.rsplit ? myDetectedIp.rsplit('.', 1)[0] : myDetectedIp.substring(0, myDetectedIp.lastIndexOf('.')) : '192.168.8';
+        const subnetBase = (myDetectedIp && myDetectedIp.includes('.')) 
+            ? myDetectedIp.substring(0, myDetectedIp.lastIndexOf('.')) 
+            : '192.168.8';
         const candidates = [
             '192.168.8.185',
             '192.168.8.194',
