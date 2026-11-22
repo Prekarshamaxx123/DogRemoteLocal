@@ -128,31 +128,6 @@ EOF
     echo "✅ Portable Linux tarball ready: dist/DogRemote-1.0.0-linux-x86_64.tar.gz"
 }
 
-build_android() {
-    echo "📦 [Android] Building Android APK using Gradle & Java 21..."
-    JAVA_HOME_PATH=""
-    if [ -d "$HOME/.local/jvm/jdk-21.0.6+7" ]; then
-        JAVA_HOME_PATH="$HOME/.local/jvm/jdk-21.0.6+7"
-    elif [ -d "/usr/lib/jvm/java-21-openjdk-amd64" ]; then
-        JAVA_HOME_PATH="/usr/lib/jvm/java-21-openjdk-amd64"
-    fi
-
-    if [ -n "$JAVA_HOME_PATH" ]; then
-        export JAVA_HOME="$JAVA_HOME_PATH"
-        export PATH="$JAVA_HOME/bin:$PATH"
-    fi
-
-    (cd "$ROOT_DIR/android" && ./gradlew assembleDebug --no-daemon)
-    APK_SRC="$ROOT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
-    if [ -f "$APK_SRC" ]; then
-        cp "$APK_SRC" "$ROOT_DIR/dist/DogRemote-1.0.0.apk"
-        cp "$APK_SRC" "$ROOT_DIR/dist/LanCast-1.0.0.apk" 2>/dev/null || true
-        echo "✅ Android APK successfully built: dist/DogRemote-1.0.0.apk"
-    else
-        echo "❌ Android APK build failed to output app-debug.apk"
-    fi
-}
-
 case $TARGET in
     "appimage"|"linux")
         build_linux_appimage
@@ -163,23 +138,19 @@ case $TARGET in
     "arch")
         build_arch
         ;;
-    "android"|"apk")
-        build_android
-        ;;
     "all")
         build_linux_appimage
         build_deb
         build_arch
-        build_android
         echo ""
         echo "========================================================"
-        echo " 🎉 ALL BUILDS COMPLETED SUCCESSFULLY!"
+        echo " 🎉 ALL LINUX BUILDS COMPLETED SUCCESSFULLY!"
         echo "    Output files in $ROOT_DIR/dist/:"
-        ls -lh "$ROOT_DIR/dist/"*.{AppImage,deb,zst,apk,tar.gz} 2>/dev/null || true
+        ls -lh "$ROOT_DIR/dist/"*.{AppImage,deb,zst,tar.gz} 2>/dev/null || true
         echo "========================================================"
         ;;
     *)
-        echo "Usage: ./scripts/build-all.sh [linux|deb|arch|android|all]"
+        echo "Usage: ./scripts/build-all.sh [linux|appimage|deb|arch|all]"
         exit 1
         ;;
 esac
