@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "========================================================"
-echo "          LanCast Multi-Platform Build System           "
+echo "          DogRemote Linux Build System                  "
 echo "========================================================"
 
 TARGET=${1:-"all"}
@@ -58,7 +58,6 @@ EOF
     rm -f "$ROOT_DIR/dist/DogRemote-1.0.0.AppImage"
     ARCH=x86_64 "$APPIMAGETOOL" "$APP_DIR" "$ROOT_DIR/dist/DogRemote-1.0.0.AppImage"
     chmod +x "$ROOT_DIR/dist/DogRemote-1.0.0.AppImage"
-    cp "$ROOT_DIR/dist/DogRemote-1.0.0.AppImage" "$ROOT_DIR/dist/LanCast-1.0.0.AppImage" 2>/dev/null || true
     echo "✅ Universal Linux AppImage ready: dist/DogRemote-1.0.0.AppImage"
 }
 
@@ -85,7 +84,6 @@ Description: Ultra-Fast Same-Network Screen Sharing & Remote Control
 EOF
 
     dpkg-deb --build --root-owner-group "$DEB_DIR" "$ROOT_DIR/dist/dogremote_1.0.0_amd64.deb"
-    cp "$ROOT_DIR/dist/dogremote_1.0.0_amd64.deb" "$ROOT_DIR/dist/lancast_1.0.0_amd64.deb" 2>/dev/null || true
     rm -rf "$DEB_DIR"
     echo "✅ Debian package ready: dist/dogremote_1.0.0_amd64.deb"
 }
@@ -118,13 +116,11 @@ depend = libxtst
 EOF
 
     (cd "$ARCH_DIR" && tar --zstd -cf "$ROOT_DIR/dist/dogremote-1.0.0-1-x86_64.pkg.tar.zst" .PKGINFO usr)
-    cp "$ROOT_DIR/dist/dogremote-1.0.0-1-x86_64.pkg.tar.zst" "$ROOT_DIR/dist/lancast-1.0.0-1-x86_64.pkg.tar.zst" 2>/dev/null || true
     rm -rf "$ARCH_DIR"
     echo "✅ Arch Linux package ready: dist/dogremote-1.0.0-1-x86_64.pkg.tar.zst"
 
     echo "📦 [Linux Portable] Generating portable tarball (.tar.gz)..."
     (cd "$ROOT_DIR/dist" && tar -czf DogRemote-1.0.0-linux-x86_64.tar.gz -C AppDir usr dogremote.desktop dogremote.png)
-    cp "$ROOT_DIR/dist/DogRemote-1.0.0-linux-x86_64.tar.gz" "$ROOT_DIR/dist/LanCast-1.0.0-linux-x86_64.tar.gz" 2>/dev/null || true
     echo "✅ Portable Linux tarball ready: dist/DogRemote-1.0.0-linux-x86_64.tar.gz"
 }
 

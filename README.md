@@ -86,10 +86,6 @@ Get precompiled releases for your operating system directly from [GitHub Release
 * **On-Demand Refresh**: Scan your subnet whenever needed with the dedicated refresh button, keeping network traffic minimal.
 * **9-Digit Device Address**: Connect with a clean 9-digit address (e.g. `192 168 008 194`) or direct IP.
 
-### 📱 Mobile Virtual Keyboard & Modifier Bar
-* **Special Keys Toolbar**: Includes dedicated buttons for `Ctrl`, `Alt`, `Shift`, `Esc`, `Tab`, `Win`, and navigation arrows directly on the mobile interface.
-* **Virtual Trackpad**: Control the desktop cursor smoothly with touch taps, double taps, and drag gestures.
-
 ---
 
 ## Building from Source (Developers Only)
@@ -107,6 +103,6 @@ pip install -r requirements.txt
 # Run the native application
 python3 main.py
 
-# Build all distribution packages (Linux AppImage, Debian .deb, Arch pkg, Android APK)
+# Build all Linux distribution packages (AppImage, Debian .deb, Arch pkg, Tar.gz)
 ./scripts/build-all.sh all
 ```
