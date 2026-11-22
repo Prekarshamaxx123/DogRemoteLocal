@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>DogRemote LOCAL</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="icon.png">
+</head>
+<body>
+    <!-- App Main Container -->
+    <div id="app" class="app-layout">
+        
+        <!-- Header Bar -->
+        <header class="app-header">
+            <div class="header-left">
+                <img src="icon.png" alt="DogRemote" class="app-icon">
+                <div class="header-title-box">
+                    <div class="app-title">🐕 DogRemote <span class="app-title-badge">LOCAL</span></div>
+                    <div class="app-subtitle">Peer-to-Peer Local Network Engine</div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div id="statusBadge" class="status-badge status-ready">● Ready to Connect</div>
+            </div>
+        </header>
+
+        <!-- Dashboard View -->
+        <main id="dashboardView" class="dashboard-container">
+            
+            <!-- Connect to Remote Device Card -->
+            <div class="dashboard-card">
+                <div class="section-tag">DIRECT CONNECT</div>
+                <h2 class="card-title">Remote Control</h2>
+                <p class="card-subtitle">Enter the 9-digit Device Address or IP of another DogRemote machine to connect.</p>
+
+                <div class="form-group">
+                    <label class="input-label" for="remoteAddressInput">DEVICE ADDRESS / HOST IP</label>
+                    <div class="input-wrapper">
+                        <input type="text" id="remoteAddressInput" class="text-input" placeholder="e.g. 192.168.8.185 or 192 168 008 185" autocomplete="off" spellcheck="false">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="input-label" for="remotePinInput">SECURITY PIN</label>
+                    <div class="input-wrapper">
+                        <input type="password" id="remotePinInput" class="text-input pin-input" placeholder="6-digit PIN" maxlength="6" inputmode="numeric" pattern="[0-9]*">
+                        <button type="button" id="togglePinVisibilityBtn" class="btn-icon" title="Toggle PIN visibility">👁️</button>
+                    </div>
+                </div>
+
+                <div class="form-options">
+                    <label class="checkbox-container">
+                        <input type="checkbox" id="requestControlCheckbox" checked>
+                        <span class="checkmark"></span>
+                        Enable Remote Mouse & Keyboard Control
+                    </label>
+                </div>
+
+                <button type="button" id="connectBtn" class="btn-cta">
+                    <span>🚀 Connect & Control</span>
+                </button>
+            </div>
+
+            <!-- Discovered Local Devices Card -->
+            <div class="dashboard-card">
+                <div class="card-header-row">
+                    <div>
+                        <div class="section-tag">LAN BEACON</div>
+                        <h2 class="card-title">Discovered Local Devices</h2>
+                    </div>
+                    <button type="button" id="refreshDiscoveryBtn" class="btn-secondary btn-sm">
+                        <span>🔄 Scan LAN</span>
+                    </button>
+                </div>
+                <p class="card-subtitle">Active DogRemote hosts detected on your local Wi-Fi subnet.</p>
+
+                <div id="discoveredList" class="discovered-list">
+                    <div class="empty-state">
+                        <div class="empty-icon">📡</div>
+                        <div class="empty-title">Scanning Local Network...</div>
+                        <div class="empty-desc">Make sure the host PC is running DogRemote on the same Wi-Fi.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Host Information Card -->
+            <div class="dashboard-card">
+                <div class="section-tag">HOST INFORMATION</div>
+                <h2 class="card-title">This Device</h2>
+                <p class="card-subtitle">Your device network details for local communication.</p>
+
+                <div class="info-container">
+                    <div class="info-row">
+                        <div>
+                            <div class="info-label">LOCAL IP ADDRESS</div>
+                            <div id="localIpText" class="info-value">Detecting IP...</div>
+                        </div>
+                        <button type="button" id="copyIpBtn" class="btn-secondary btn-xs">Copy</button>
+                    </div>
+                </div>
+
+                <div class="info-container" style="margin-top: 10px;">
+                    <div class="info-row">
+                        <div>
+                            <div class="info-label">CONNECTION PROTOCOL</div>
+                            <div class="info-value">High-Speed WebSocket (Port 5859)</div>
+                        </div>
+                        <span class="badge-tag">Zero Cloud</span>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- Remote Session Viewer View (Hidden initially) -->
+        <div id="viewerView" class="viewer-container" style="display: none;">
+            
+            <!-- Floating Top HUD -->
+            <div id="viewerHud" class="viewer-hud">
+                <div class="hud-left">
+                    <div class="hud-brand">🐕 DogRemote</div>
+                    <select id="screenSelect" class="hud-select" title="Switch Display">
+                        <option value="0">🖥️ Screen 1</option>
+                    </select>
+                </div>
+                <div class="hud-center">
+                    <div id="hudLatencyBadge" class="hud-badge">⚡ 1.1 ms • 60 FPS</div>
+                </div>
+                <div class="hud-right">
+                    <button type="button" id="hudKeyboardToggleBtn" class="btn-hud" title="Toggle On-Screen Keyboard">⌨️</button>
+                    <button type="button" id="hudFullscreenBtn" class="btn-hud" title="Toggle Fullscreen">⛶</button>
+                    <button type="button" id="hudDisconnectBtn" class="btn-hud btn-hud-danger" title="Disconnect Session">✕</button>
+                </div>
+            </div>
+
+            <!-- Canvas Viewport -->
+            <div id="canvasWrapper" class="canvas-wrapper">
+                <canvas id="screenCanvas"></canvas>
+            </div>
+
+            <!-- Bottom Floating Virtual Keys Toolbar -->
+            <div id="virtualKeyToolbar" class="virtual-key-toolbar">
+                <button type="button" class="vkey" data-key="Escape">Esc</button>
+                <button type="button" class="vkey" data-key="Tab">Tab</button>
+                <button type="button" class="vkey modifier-key" data-key="Control_L">Ctrl</button>
+                <button type="button" class="vkey modifier-key" data-key="Alt_L">Alt</button>
+                <button type="button" class="vkey modifier-key" data-key="Shift_L">Shift</button>
+                <button type="button" class="vkey" data-key="Super_L">Win</button>
+                <button type="button" class="vkey" data-key="BackSpace">⌫</button>
+                <button type="button" class="vkey" data-key="Return">↵</button>
+                <button type="button" class="vkey" data-key="Left">←</button>
+                <button type="button" class="vkey" data-key="Up">↑</button>
+                <button type="button" class="vkey" data-key="Down">↓</button>
+                <button type="button" class="vkey" data-key="Right">→</button>
+                <button type="button" id="triggerNativeKeyboardBtn" class="vkey vkey-kb">⌨️</button>
+            </div>
+
+            <!-- Hidden Input for Native Keyboard Typing -->
+            <input type="text" id="hiddenKeyboardInput" class="hidden-input" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+        </div>
+
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -27,22 +27,28 @@ Delivers native 60 FPS streaming with ultra-low latency (~1.1 ms round-trip time
 
 Get the latest universal standalone AppImage directly from [GitHub Releases](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest).
 
-### Direct Download Endpoint
+### Direct Download Endpoints
 
-| Platform | Package Format | Direct Download URL | Run Command |
+| Platform | Package Format | Direct Download URL | Run / Install Command |
 | :--- | :--- | :--- | :--- |
 | **Linux (Universal)** | Standalone AppImage | [`DogRemote-1.0.0.AppImage`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.AppImage) | `chmod +x DogRemote-1.0.0.AppImage && ./DogRemote-1.0.0.AppImage` |
+| **Android (Phone / Tablet)** | 100% Offline APK | [`DogRemote-1.0.0.apk`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.apk) | Install via ADB or download directly on phone |
 
 ---
 
 ## Quick Start Guide
 
+### 🐧 Linux Desktop:
 Works out-of-the-box across Ubuntu, Debian, Fedora, Arch, openSUSE, and Kali Linux without installation:
 ```bash
 wget https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.AppImage
 chmod +x DogRemote-1.0.0.AppImage
 ./DogRemote-1.0.0.AppImage
 ```
+
+### 📱 Android Devices:
+Download and install [`DogRemote-1.0.0.apk`](https://github.com/Prekarshamaxx123/DogRemoteLocal/releases/latest/download/DogRemote-1.0.0.apk) on your Android phone or tablet. Connect to the same Wi-Fi network and input your Host PC's IP and 6-digit PIN. Works 100% offline without external internet.
+
 
 ---
 
@@ -91,4 +97,7 @@ python3 main.py
 
 # Build the standalone Universal Linux AppImage
 ./scripts/build-all.sh appimage
+
+# Build the Android APK (Requires Android SDK & JDK 21)
+./scripts/build-apk.sh
 ```

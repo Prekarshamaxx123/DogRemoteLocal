@@ -12,6 +12,13 @@ import os
 import queue
 import sys
 
+try:
+    import websockets
+    import asyncio
+    HAS_WEBSOCKETS = True
+except ImportError:
+    HAS_WEBSOCKETS = False
+
 from .protocol import (
     TYPE_CONNECT_REQ, TYPE_CONNECT_RES, TYPE_INPUT_MOUSE_MOVE,
     TYPE_INPUT_MOUSE_CLICK, TYPE_INPUT_KEY, TYPE_INPUT_SCROLL,
@@ -54,6 +61,10 @@ class LanCastServer:
         self._input_lock = threading.Lock()
         self._audio_capture = None
 
+        self.ws_port = 5859
+        self.ws_clients = set()
+        self.ws_loop = None
+
     def start(self):
         self.running = True
         self._ensure_input_simulator()
@@ -78,6 +89,9 @@ class LanCastServer:
         self._server_thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._server_thread.start()
         print(f"[DogRemote] Server listening on port {self.port}")
+
+        if HAS_WEBSOCKETS:
+            self._start_ws_server()
 
     def stop(self):
         self.running = False
@@ -189,6 +203,13 @@ class LanCastServer:
 
     def broadcast_frame(self, jpeg_bytes: bytes):
         """Dispatches latest frame to all clients with zero queue lag."""
+        if self.ws_loop and self.ws_clients:
+            for ws in list(self.ws_clients):
+                try:
+                    self.ws_loop.call_soon_threadsafe(asyncio.create_task, ws.send(jpeg_bytes))
+                except Exception:
+                    pass
+
         with self._lock:
             if not self.clients:
                 return
@@ -219,6 +240,14 @@ class LanCastServer:
     def broadcast_clipboard(self, text: str, exclude_session=None):
         if not text:
             return
+        if self.ws_loop and self.ws_clients:
+            ws_msg = json.dumps({"type": "clipboard", "text": text})
+            for ws in list(self.ws_clients):
+                try:
+                    self.ws_loop.call_soon_threadsafe(asyncio.create_task, ws.send(ws_msg))
+                except Exception:
+                    pass
+
         with self._lock:
             targets = [c for c in self.clients if c.is_approved and c.running and c != exclude_session]
 
@@ -237,6 +266,18 @@ class LanCastServer:
         self.active_screen_idx = screen_idx
         if screens_info is not None:
             self.screens_info = screens_info
+
+        if self.ws_loop and self.ws_clients:
+            ws_msg = json.dumps({
+                "type": "screen_changed",
+                "screen_index": screen_idx,
+                "screens": self.screens_info
+            })
+            for ws in list(self.ws_clients):
+                try:
+                    self.ws_loop.call_soon_threadsafe(asyncio.create_task, ws.send(ws_msg))
+                except Exception:
+                    pass
 
         msg = pack_json(TYPE_SET_SCREEN, {
             "screen_index": screen_idx,
@@ -295,6 +336,102 @@ class LanCastServer:
         else:
             cmd = 'keydown' if action == 'down' else 'keyup'
             self._send_xdotool(f"{cmd} {key_name}\n")
+
+    def _start_ws_server(self):
+        def run_ws():
+            async def ws_handler(websocket):
+                await self._handle_ws_client(websocket)
+
+            async def main_ws():
+                self.ws_loop = asyncio.get_running_loop()
+                try:
+                    async with websockets.serve(ws_handler, self.host, self.ws_port):
+                        print(f"[DogRemote] Mobile WebSocket server listening on port {self.ws_port}")
+                        await asyncio.Future()
+                except Exception as e:
+                    print(f"[DogRemote] WebSocket server error: {e}")
+
+            try:
+                asyncio.run(main_ws())
+            except Exception as e:
+                print(f"[DogRemote] WebSocket runner exited: {e}")
+
+        threading.Thread(target=run_ws, daemon=True).start()
+
+    async def _handle_ws_client(self, websocket):
+        client_name = "Mobile Device"
+        try:
+            raw = await websocket.recv()
+            if isinstance(raw, str):
+                data = json.loads(raw)
+                client_name = data.get("name", "Mobile Device")
+                req_pwd = str(data.get("password", "")).strip()
+
+                if self.access_password:
+                    if req_pwd == self.access_password:
+                        pass
+                    else:
+                        reason = "PASSWORD_INCORRECT" if req_pwd else "PASSWORD_REQUIRED"
+                        await websocket.send(json.dumps({
+                            "type": "connect_res",
+                            "accepted": False,
+                            "reason": reason
+                        }))
+                        return
+
+                self.ws_clients.add(websocket)
+                await websocket.send(json.dumps({
+                    "type": "connect_res",
+                    "accepted": True,
+                    "screens": self.screens_info,
+                    "active_screen": self.active_screen_idx
+                }))
+                print(f"[DogRemote] Mobile client connected & approved: {client_name}")
+                if self.on_client_joined:
+                    try:
+                        self.on_client_joined(None)
+                    except Exception:
+                        pass
+
+            async for message in websocket:
+                if isinstance(message, str):
+                    msg = json.loads(message)
+                    mtype = msg.get("type")
+                    if mtype == "ping":
+                        await websocket.send(json.dumps({"type": "pong", "ts": msg.get("ts")}))
+                    elif mtype == "set_screen":
+                        s_idx = msg.get("screen_index", 0)
+                        if self.on_screen_switch_requested:
+                            self.on_screen_switch_requested(s_idx)
+                        self.broadcast_screen_changed(s_idx, self.screens_info)
+                    elif mtype == "mouse_move":
+                        self.execute_mouse_move(float(msg.get("x", 0.5)), float(msg.get("y", 0.5)))
+                    elif mtype == "mouse_click":
+                        self.execute_mouse_click(
+                            msg.get("button", "left"),
+                            msg.get("action", "click"),
+                            float(msg["x"]) if "x" in msg and msg["x"] is not None else None,
+                            float(msg["y"]) if "y" in msg and msg["y"] is not None else None
+                        )
+                    elif mtype == "scroll":
+                        self.execute_scroll(int(msg.get("steps", 0)))
+                    elif mtype == "key":
+                        self.execute_key(str(msg.get("key", "")), str(msg.get("action", "key")))
+                    elif mtype == "clipboard":
+                        clip_text = str(msg.get("text", ""))
+                        if self.on_clipboard_received:
+                            self.on_clipboard_received(clip_text)
+                        self.broadcast_clipboard(clip_text)
+        except Exception:
+            pass
+        finally:
+            self.ws_clients.discard(websocket)
+            print(f"[DogRemote] Mobile client disconnected: {client_name}")
+            if self.on_client_left:
+                try:
+                    self.on_client_left(None)
+                except Exception:
+                    pass
 
 class ClientSession:
     def __init__(self, server: LanCastServer, sock: socket.socket, addr):

@@ -1,0 +1,10 @@
+{
+  "appId": "com.dogremote.local",
+  "appName": "DogRemote Local",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}
