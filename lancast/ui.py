@@ -1503,14 +1503,18 @@ class LanCastMainWindow(QMainWindow):
         dlg.exec()
 
     def on_client_joined(self, session: ClientSession):
-        cnt = len([c for c in self.server.clients if c.is_approved])
+        tcp_cnt = len([c for c in self.server.clients if c.is_approved]) if self.server else 0
+        ws_cnt = len(self.server.ws_clients) if self.server else 0
+        cnt = tcp_cnt + ws_cnt
         self.lbl_viewers.setText(f"{cnt} Viewer{'s' if cnt != 1 else ''} Connected")
         self.lbl_viewers.setStyleSheet("font-size: 11px; font-weight: bold; color: #a78bfa; padding-left: 2px;")
         if not self.is_sharing:
             self.start_sharing()
 
     def on_client_left(self, session: ClientSession):
-        cnt = len([c for c in self.server.clients if c.is_approved])
+        tcp_cnt = len([c for c in self.server.clients if c.is_approved]) if self.server else 0
+        ws_cnt = len(self.server.ws_clients) if self.server else 0
+        cnt = tcp_cnt + ws_cnt
         self.lbl_viewers.setText(f"{cnt} Viewer{'s' if cnt != 1 else ''} Connected")
         if cnt == 0:
             self.lbl_viewers.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748b; padding-left: 2px;")

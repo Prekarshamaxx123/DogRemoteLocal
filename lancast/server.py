@@ -420,6 +420,11 @@ class LanCastServer:
                     "active_screen": self.active_screen_idx
                 }))
                 print(f"[LanCast] Mobile client connected & approved: {client_name}")
+                if self.on_client_joined:
+                    try:
+                        self.on_client_joined(None)
+                    except Exception:
+                        pass
 
             # 2. Main message loop
             async for message in websocket:
@@ -456,6 +461,11 @@ class LanCastServer:
         finally:
             self.ws_clients.discard(websocket)
             print(f"[LanCast] Mobile client disconnected: {client_name}")
+            if self.on_client_left:
+                try:
+                    self.on_client_left(None)
+                except Exception:
+                    pass
 
 
 class ClientSession:

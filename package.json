@@ -1,0 +1,24 @@
+{
+  "name": "lancast",
+  "version": "1.0.0",
+  "description": "Ultra-Fast Same-Network Screen Sharing & Remote Desktop (Linux, Windows, macOS, Android)",
+  "homepage": "https://github.com/lancast/lancast",
+  "license": "MIT",
+  "scripts": {
+    "build:android": "./scripts/build-all.sh android",
+    "build:all": "./scripts/build-all.sh all"
+  },
+  "keywords": [
+    "screenshare",
+    "remote-desktop",
+    "lan",
+    "python",
+    "pyqt6",
+    "cross-platform"
+  ],
+  "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
+    "@capacitor/core": "^8.6.2"
+  }
+}
