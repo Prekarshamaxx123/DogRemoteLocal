@@ -1272,6 +1272,7 @@ class LanCastMainWindow(QMainWindow):
         self.server.on_client_left = lambda s: self.bridge.client_left.emit(s)
         self.server.on_clipboard_received = lambda txt: self.bridge.clipboard_received.emit(txt)
         self.server.on_screen_switch_requested = lambda sid: self.bridge.screen_switch_requested.emit(sid)
+        self.server.on_quality_switch_requested = self.on_quality_selected
         self.update_available_screens()
         self.server.start()
         
@@ -1421,6 +1422,10 @@ class LanCastMainWindow(QMainWindow):
 
     def on_quality_selected(self, idx):
         self.selected_quality_idx = idx
+        if 0 <= idx < self.combo_quality.count():
+            self.combo_quality.blockSignals(True)
+            self.combo_quality.setCurrentIndex(idx)
+            self.combo_quality.blockSignals(False)
 
     def toggle_sharing(self):
         if self.is_sharing:
@@ -1524,7 +1529,7 @@ class LanCastMainWindow(QMainWindow):
 
     def on_device_discovered(self, dev: dict, is_new: bool):
         self.empty_state_frame.setVisible(False)
-        target_id = f"dev_{dev['ip'].replace('.', '_')}_{dev.get('port', 5858)}"
+        target_id = f"dev_{dev['ip'].replace('.', '_')}"
         
         for i in range(self.discovered_layout.count()):
             w = self.discovered_layout.itemAt(i).widget()

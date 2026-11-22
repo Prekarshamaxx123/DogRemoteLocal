@@ -152,7 +152,9 @@ class LanDiscovery:
             pass
 
     def _register_device(self, ip: str, name: str, port: int):
-        dev_id = f"{ip}:{port}"
+        if not ip or ip == self.local_ip or ip.startswith("127.") or ip == "localhost":
+            return
+        dev_id = ip
         dev = {
             "name": name,
             "ip": ip,
@@ -160,11 +162,13 @@ class LanDiscovery:
             "last_seen": time.time()
         }
         with self._lock:
-            is_new = dev_id not in self.discovered_devices
+            if dev_id in self.discovered_devices:
+                self.discovered_devices[dev_id]["last_seen"] = time.time()
+                return
             self.discovered_devices[dev_id] = dev
 
         if self.on_device_found:
-            self.on_device_found(dev, is_new)
+            self.on_device_found(dev, True)
 
     def _clean_loop(self):
         """Prunes dead devices after 25 seconds of silence."""

@@ -1,6 +1,7 @@
 /**
  * DogRemote LOCAL - Mobile Web & Android Client
- * Engineered to match Linux Qt6 UI with Ultra-Low Latency WebSocket Streaming
+ * Engineered to match Linux Qt6 UI with Ultra-Low Latency WebSocket Streaming,
+ * full host/client password configuration, accurate dynamic RTT tracking, and multi-display controls.
  */
 
 (function () {
@@ -10,41 +11,71 @@
     const dashboardView = document.getElementById('dashboardView');
     const viewerView = document.getElementById('viewerView');
     const statusBadge = document.getElementById('statusBadge');
+    
+    // Direct Connect Elements
     const remoteAddressInput = document.getElementById('remoteAddressInput');
+    const remotePortInput = document.getElementById('remotePortInput');
     const remotePinInput = document.getElementById('remotePinInput');
     const togglePinVisibilityBtn = document.getElementById('togglePinVisibilityBtn');
+    const clientQualitySelect = document.getElementById('clientQualitySelect');
     const requestControlCheckbox = document.getElementById('requestControlCheckbox');
     const connectBtn = document.getElementById('connectBtn');
+
+    // Discovery Elements
     const refreshDiscoveryBtn = document.getElementById('refreshDiscoveryBtn');
     const discoveredList = document.getElementById('discoveredList');
+
+    // Host Settings Elements
+    const requirePasswordCheckbox = document.getElementById('requirePasswordCheckbox');
+    const hostPasswordInput = document.getElementById('hostPasswordInput');
+    const toggleHostMaskBtn = document.getElementById('toggleHostMaskBtn');
+    const generateNewPwdBtn = document.getElementById('generateNewPwdBtn');
+    const copyHostPwdBtn = document.getElementById('copyHostPwdBtn');
+    const allowRemoteControlCheckbox = document.getElementById('allowRemoteControlCheckbox');
+    const streamAudioCheckbox = document.getElementById('streamAudioCheckbox');
+
+    // Info Elements
     const localIpText = document.getElementById('localIpText');
     const copyIpBtn = document.getElementById('copyIpBtn');
     const toast = document.getElementById('toast');
 
+    // Auth Prompt Modal
+    const authModal = document.getElementById('authModal');
+    const authModalSubtitle = document.getElementById('authModalSubtitle');
+    const modalPasswordInput = document.getElementById('modalPasswordInput');
+    const modalToggleMaskBtn = document.getElementById('modalToggleMaskBtn');
+    const modalCancelBtn = document.getElementById('modalCancelBtn');
+    const modalConnectBtn = document.getElementById('modalConnectBtn');
+
     // Viewer HUD Elements
     const screenSelect = document.getElementById('screenSelect');
-    const hudLatencyBadge = document.getElementById('hudLatencyBadge');
+    const hudLatencyText = document.getElementById('hudLatencyText');
     const hudKeyboardToggleBtn = document.getElementById('hudKeyboardToggleBtn');
     const hudFullscreenBtn = document.getElementById('hudFullscreenBtn');
     const hudDisconnectBtn = document.getElementById('hudDisconnectBtn');
     const screenCanvas = document.getElementById('screenCanvas');
     const canvasWrapper = document.getElementById('canvasWrapper');
     const virtualKeyToolbar = document.getElementById('virtualKeyToolbar');
+    const triggerNativeKeyboardBtn = document.getElementById('triggerNativeKeyboardBtn');
     const hiddenKeyboardInput = document.getElementById('hiddenKeyboardInput');
 
     const ctx = screenCanvas.getContext('2d', { alpha: false });
 
-    // State
+    // Connection State
     let ws = null;
     let isConnected = false;
+    let targetHost = '';
+    let targetPort = 5859;
+    let myDetectedIp = '';
     let lastPingTs = 0;
-    let rttMs = 1.0;
+    let rttMs = 0;
     let frameCount = 0;
     let currentFps = 60;
     let lastFpsCalc = Date.now();
     let pingInterval = null;
     let isRendering = false;
     let activeModifiers = { Control_L: false, Alt_L: false, Shift_L: false };
+    const discoveredIps = new Set();
 
     // Touch gesture tracking
     let touchStartTime = 0;
@@ -55,9 +86,12 @@
     let lastTapTime = 0;
     let initialTouchDistance = 0;
 
-    // Load saved settings & history
+    // Load saved settings
     const savedAddress = localStorage.getItem('dogremote_last_addr') || '';
     if (savedAddress) remoteAddressInput.value = savedAddress;
+
+    const savedHostPwd = localStorage.getItem('dogremote_host_pwd') || '';
+    if (savedHostPwd) hostPasswordInput.value = savedHostPwd;
 
     // Toast helper
     function showToast(message, duration = 2500) {
@@ -66,10 +100,30 @@
         setTimeout(() => toast.classList.remove('show'), duration);
     }
 
-    // IP Address Parsing (Formats 9-digit or regular IP)
+    // WebRTC Local IP Detection (Zero-cloud, works 100% offline inside Android WebView)
+    function detectLocalIp() {
+        try {
+            const pc = new (window.RTCPeerConnection || window.webkitRTCPeerConnection)({ iceServers: [] });
+            pc.createDataChannel('ip-probe');
+            pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(() => {});
+            pc.onicecandidate = (event) => {
+                if (!event || !event.candidate || !event.candidate.candidate) return;
+                const match = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(event.candidate.candidate);
+                if (match && match[1] && !match[1].startsWith('127.') && match[1] !== '0.0.0.0') {
+                    myDetectedIp = match[1];
+                    localIpText.textContent = `${myDetectedIp} (Wi-Fi)`;
+                    try { pc.close(); } catch(e) {}
+                }
+            };
+        } catch (e) {
+            console.warn('WebRTC IP probe unavailable:', e);
+        }
+    }
+    detectLocalIp();
+
+    // IP Address Parsing
     function parseAddress(raw) {
         const cleaned = raw.replace(/\s+/g, '').trim();
-        // Check 9-digit format (e.g. 192168008185 -> 192.168.8.185 or 12 digits)
         if (/^\d{9,12}$/.test(cleaned)) {
             const parts = cleaned.match(/.{1,3}/g);
             if (parts && parts.length === 4) {
@@ -79,20 +133,75 @@
         return cleaned;
     }
 
-    // Toggle PIN Visibility
+    // Client PIN Visibility Toggle
     togglePinVisibilityBtn.addEventListener('click', () => {
         if (remotePinInput.type === 'password') {
             remotePinInput.type = 'text';
-            togglePinVisibilityBtn.textContent = '🔒';
+            togglePinVisibilityBtn.textContent = 'Hide';
         } else {
             remotePinInput.type = 'password';
-            togglePinVisibilityBtn.textContent = '👁️';
+            togglePinVisibilityBtn.textContent = 'Show';
         }
+    });
+
+    // Modal PIN Visibility Toggle
+    modalToggleMaskBtn.addEventListener('click', () => {
+        if (modalPasswordInput.type === 'password') {
+            modalPasswordInput.type = 'text';
+            modalToggleMaskBtn.textContent = 'Hide';
+        } else {
+            modalPasswordInput.type = 'password';
+            modalToggleMaskBtn.textContent = 'Show';
+        }
+    });
+
+    // Host Password Controls
+    toggleHostMaskBtn.addEventListener('click', () => {
+        if (hostPasswordInput.type === 'password') {
+            hostPasswordInput.type = 'text';
+            toggleHostMaskBtn.textContent = 'Hide';
+        } else {
+            hostPasswordInput.type = 'password';
+            toggleHostMaskBtn.textContent = 'Show';
+        }
+    });
+
+    generateNewPwdBtn.addEventListener('click', () => {
+        const newPwd = Math.floor(100000 + Math.random() * 900000).toString();
+        hostPasswordInput.value = newPwd;
+        localStorage.setItem('dogremote_host_pwd', newPwd);
+        generateNewPwdBtn.textContent = 'Done!';
+        showToast(`Generated New Password: ${newPwd}`);
+        setTimeout(() => generateNewPwdBtn.textContent = 'New', 1200);
+    });
+
+    copyHostPwdBtn.addEventListener('click', () => {
+        const pwd = hostPasswordInput.value.trim();
+        if (pwd && navigator.clipboard) {
+            navigator.clipboard.writeText(pwd).then(() => {
+                copyHostPwdBtn.textContent = 'Copied!';
+                showToast('Host Password Copied!');
+                setTimeout(() => copyHostPwdBtn.textContent = 'Copy', 1500);
+            });
+        }
+    });
+
+    hostPasswordInput.addEventListener('input', () => {
+        localStorage.setItem('dogremote_host_pwd', hostPasswordInput.value.trim());
+    });
+
+    requirePasswordCheckbox.addEventListener('change', () => {
+        const enabled = requirePasswordCheckbox.checked;
+        hostPasswordInput.disabled = !enabled;
+        toggleHostMaskBtn.disabled = !enabled;
+        generateNewPwdBtn.disabled = !enabled;
+        copyHostPwdBtn.disabled = !enabled;
+        showToast(enabled ? 'Password Protection Enabled' : 'Password Protection Disabled');
     });
 
     // Copy IP button
     copyIpBtn.addEventListener('click', () => {
-        const ip = localIpText.textContent.trim();
+        const ip = localIpText.textContent.replace('(Wi-Fi)', '').replace('(Local)', '').trim();
         if (ip && !ip.includes('Detecting')) {
             navigator.clipboard.writeText(ip).then(() => showToast('IP Address Copied!'));
         }
@@ -101,6 +210,7 @@
     // Connect Button Click
     connectBtn.addEventListener('click', () => {
         const rawAddr = remoteAddressInput.value.trim();
+        const portStr = remotePortInput.value.trim();
         const pin = remotePinInput.value.trim();
 
         if (!rawAddr) {
@@ -109,9 +219,10 @@
             return;
         }
 
-        const hostIp = parseAddress(rawAddr);
+        targetHost = parseAddress(rawAddr);
+        targetPort = parseInt(portStr, 10) || 5859;
         localStorage.setItem('dogremote_last_addr', rawAddr);
-        startConnection(hostIp, 5859, pin);
+        startConnection(targetHost, targetPort, pin);
     });
 
     // WebSocket Connection
@@ -121,9 +232,12 @@
             ws = null;
         }
 
+        targetHost = host;
+        targetPort = port;
+
         showToast(`Connecting to ${host}:${port}...`);
         connectBtn.disabled = true;
-        connectBtn.querySelector('span').textContent = '⏳ Connecting...';
+        connectBtn.querySelector('span').textContent = 'Connecting...';
 
         const wsUrl = `ws://${host}:${port}`;
         ws = new WebSocket(wsUrl);
@@ -134,30 +248,35 @@
                 try { ws.close(); } catch (e) {}
                 onConnectionFailed('Connection timed out. Check IP and Wi-Fi.');
             }
-        }, 6000);
+        }, 5000);
 
         ws.onopen = () => {
-            // Step 1: Send authentication handshake
+            // Handshake with password and control
             ws.send(JSON.stringify({
-                name: 'DogRemote Mobile Viewer',
+                name: 'DogRemote Mobile Client',
                 password: password,
                 control: requestControlCheckbox.checked
+            }));
+
+            // Initial quality preset
+            const qIdx = parseInt(clientQualitySelect.value, 10) || 0;
+            ws.send(JSON.stringify({
+                type: 'set_quality',
+                quality_index: qIdx
             }));
         };
 
         ws.onmessage = (event) => {
-            // Binary message = Screen frame (JPEG)
             if (event.data instanceof ArrayBuffer) {
                 handleFrameData(event.data);
                 return;
             }
 
-            // Text message = JSON control protocol
             try {
                 const msg = JSON.parse(event.data);
                 handleJsonMessage(msg, connectTimeout);
             } catch (e) {
-                console.error('Invalid JSON message', e);
+                console.error('Protocol parse error:', e);
             }
         };
 
@@ -177,13 +296,19 @@
         if (msg.type === 'connect_res') {
             clearTimeout(connectTimeout);
             if (msg.accepted) {
+                closeAuthModal();
+                if (msg.client_ip && !msg.client_ip.startsWith('127.')) {
+                    myDetectedIp = msg.client_ip;
+                    localIpText.textContent = `${myDetectedIp} (Wi-Fi)`;
+                }
                 onConnected(msg);
             } else {
                 onConnectionFailed(msg.reason || 'Connection rejected by host.');
             }
         } else if (msg.type === 'pong') {
             const now = Date.now();
-            rttMs = Math.max(0.5, (now - lastPingTs) / 2);
+            const rawRtt = Math.max(1, now - (msg.client_ts || lastPingTs));
+            rttMs = rttMs > 0 ? (rttMs * 0.75 + rawRtt * 0.25) : rawRtt;
             updateHudBadge();
         } else if (msg.type === 'screen_changed') {
             populateScreens(msg.screens, msg.screen_index);
@@ -198,8 +323,8 @@
     function onConnected(info) {
         isConnected = true;
         connectBtn.disabled = false;
-        connectBtn.querySelector('span').textContent = '🚀 Connect & Control';
-        statusBadge.textContent = '● Streaming Active';
+        connectBtn.querySelector('span').textContent = 'Connect & Control';
+        statusBadge.innerHTML = '<span class="status-dot"></span> Streaming Active';
         statusBadge.className = 'status-badge status-connected';
 
         // Switch to Viewer View
@@ -209,24 +334,24 @@
         // Populate Screen switcher
         populateScreens(info.screens || [], info.active_screen || 0);
 
-        // Start ping loop
+        // Send immediate ping
+        sendPing();
         pingInterval = setInterval(sendPing, 1000);
 
         showToast('Connected to Host!');
     }
 
-    // Connection Failure Handler
+    // Connection Failure Handler (Pops up Password Modal when password is required or wrong)
     function onConnectionFailed(reason) {
         isConnected = false;
         connectBtn.disabled = false;
-        connectBtn.querySelector('span').textContent = '🚀 Connect & Control';
-        statusBadge.textContent = '● Connection Failed';
+        connectBtn.querySelector('span').textContent = 'Connect & Control';
+        statusBadge.innerHTML = '<span class="status-dot" style="background:#ef4444;"></span> Connection Failed';
         statusBadge.className = 'status-badge';
         statusBadge.style.color = '#ef4444';
 
-        if (reason === 'PASSWORD_INCORRECT') {
-            showToast('Incorrect PIN! Please check host screen.');
-            remotePinInput.focus();
+        if (reason === 'PASSWORD_INCORRECT' || reason === 'PASSWORD_REQUIRED') {
+            openAuthModal(reason === 'PASSWORD_INCORRECT');
         } else {
             showToast(`Connection Failed: ${reason}`);
         }
@@ -237,8 +362,8 @@
         isConnected = false;
         clearInterval(pingInterval);
         connectBtn.disabled = false;
-        connectBtn.querySelector('span').textContent = '🚀 Connect & Control';
-        statusBadge.textContent = '● Ready to Connect';
+        connectBtn.querySelector('span').textContent = 'Connect & Control';
+        statusBadge.innerHTML = '<span class="status-dot"></span> Ready to Connect';
         statusBadge.className = 'status-badge status-ready';
         statusBadge.style.color = '';
 
@@ -248,6 +373,30 @@
         showToast('Session Disconnected');
     }
 
+    // Authentication Prompt Modal (Direct popup for password)
+    function openAuthModal(isIncorrect = false) {
+        authModalSubtitle.innerHTML = isIncorrect
+            ? `<span style="color:#ef4444; font-weight:bold;">Incorrect Password!</span> Please try again for <b>${targetHost}:${targetPort}</b>:`
+            : `The host at <b>${targetHost}:${targetPort}</b> requires a security password:`;
+        
+        modalPasswordInput.value = remotePinInput.value;
+        authModal.style.display = 'flex';
+        modalPasswordInput.focus();
+    }
+
+    function closeAuthModal() {
+        authModal.style.display = 'none';
+    }
+
+    modalCancelBtn.addEventListener('click', closeAuthModal);
+
+    modalConnectBtn.addEventListener('click', () => {
+        const entered = modalPasswordInput.value.trim();
+        remotePinInput.value = entered;
+        closeAuthModal();
+        startConnection(targetHost, targetPort, entered);
+    });
+
     // Send Ping
     function sendPing() {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -256,7 +405,7 @@
         }
     }
 
-    // Screen Frame Decoding & Rendering (JPEG Blob)
+    // Screen Frame Decoding & Rendering (Zero-Lag Direct Blob Decode)
     function handleFrameData(buffer) {
         frameCount++;
         const now = Date.now();
@@ -286,7 +435,8 @@
 
     // Update Floating HUD Stats Badge
     function updateHudBadge() {
-        hudLatencyBadge.textContent = `⚡ ${rttMs.toFixed(1)} ms • ${currentFps} FPS • ${screenCanvas.width}x${screenCanvas.height}`;
+        const msDisplay = rttMs > 0 ? Math.round(rttMs) : 1;
+        hudLatencyText.textContent = `${msDisplay} ms • ${currentFps} FPS`;
     }
 
     // Populate Screens Dropdown
@@ -295,7 +445,7 @@
         if (!screens || screens.length === 0) {
             const opt = document.createElement('option');
             opt.value = '0';
-            opt.textContent = '🖥️ Screen 1';
+            opt.textContent = 'Screen 1';
             screenSelect.appendChild(opt);
             return;
         }
@@ -303,16 +453,15 @@
         screens.forEach((sc, idx) => {
             const opt = document.createElement('option');
             opt.value = idx.toString();
-            opt.textContent = `${sc.name || 'Screen ' + (idx + 1)} (${sc.width || 1920}x${sc.height || 1080})`;
+            opt.textContent = `${sc.name || 'Screen ' + (idx + 1)}`;
             if (idx === activeIdx) opt.selected = true;
             screenSelect.appendChild(opt);
         });
 
-        // Add unified multi-screen canvas option if > 1 screens
         if (screens.length > 1) {
             const optAll = document.createElement('option');
             optAll.value = '-1';
-            optAll.textContent = '🖥️ All Displays';
+            optAll.textContent = 'All Displays';
             if (activeIdx === -1) optAll.selected = true;
             screenSelect.appendChild(optAll);
         }
@@ -323,7 +472,7 @@
         const idx = parseInt(screenSelect.value, 10);
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'set_screen', screen_index: idx }));
-            showToast(`Switching to display ${screenSelect.options[screenSelect.selectedIndex].text}...`);
+            showToast(`Switching to ${screenSelect.options[screenSelect.selectedIndex].text}...`);
         }
     });
 
@@ -343,7 +492,7 @@
         }
     });
 
-    // Touch Event Handling (Touch to Mouse Translation)
+    // Touch Event Handling
     function getNormalizedCoords(e) {
         const rect = screenCanvas.getBoundingClientRect();
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -450,7 +599,6 @@
             e.preventDefault();
             const keyName = btn.getAttribute('data-key');
             if (btn.classList.contains('modifier-key')) {
-                // Toggle modifier state
                 activeModifiers[keyName] = !activeModifiers[keyName];
                 btn.classList.toggle('active', activeModifiers[keyName]);
                 sendKey(keyName, activeModifiers[keyName] ? 'down' : 'up');
@@ -460,17 +608,18 @@
         });
     });
 
-    // Native Mobile Keyboard Integration
-    const triggerNativeKeyboardBtn = document.getElementById('triggerNativeKeyboardBtn');
+    // Native Mobile Keyboard Integration (Prominent button on the far left)
     triggerNativeKeyboardBtn.addEventListener('click', () => {
         hiddenKeyboardInput.focus();
+        showToast('Keyboard Active');
     });
 
     hudKeyboardToggleBtn.addEventListener('click', () => {
         hiddenKeyboardInput.focus();
+        showToast('Keyboard Active');
     });
 
-    hiddenKeyboardInput.addEventListener('input', (e) => {
+    hiddenKeyboardInput.addEventListener('input', () => {
         const val = hiddenKeyboardInput.value;
         if (val) {
             for (let char of val) {
@@ -488,49 +637,60 @@
         }
     });
 
-    // Auto LAN Discovery (Subnet probe on port 5859)
+    // Subnet Scanner with Deduplication and Dynamic Ping
     function discoverLocalDevices() {
         discoveredList.innerHTML = `
             <div class="empty-state">
-                <div class="empty-icon">📡</div>
+                <div class="empty-icon">
+                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></svg>
+                </div>
                 <div class="empty-title">Scanning Local Wi-Fi Subnet...</div>
                 <div class="empty-desc">Probing active DogRemote hosts...</div>
             </div>
         `;
 
-        // Get current origin IP or default local subnet
-        const currentHost = window.location.hostname || '192.168.8.185';
-        const subnetParts = currentHost.split('.');
-        const prefix = (subnetParts.length === 4) ? `${subnetParts[0]}.${subnetParts[1]}.${subnetParts[2]}` : '192.168.8';
+        discoveredIps.clear();
 
-        // Display local IP estimation
-        localIpText.textContent = `${currentHost} (Wi-Fi)`;
-
-        // Candidates to probe: known host, nearby addresses
+        // Subnet candidates
+        const subnetBase = myDetectedIp ? myDetectedIp.rsplit ? myDetectedIp.rsplit('.', 1)[0] : myDetectedIp.substring(0, myDetectedIp.lastIndexOf('.')) : '192.168.8';
         const candidates = [
             '192.168.8.185',
             '192.168.8.194',
             '192.168.1.100',
             '192.168.0.100'
         ];
-        if (!candidates.includes(currentHost)) {
-            candidates.unshift(currentHost);
+
+        // Add nearby IP candidates from detected subnet
+        for (let i = 180; i <= 195; i++) {
+            const ip = `${subnetBase}.${i}`;
+            if (!candidates.includes(ip) && ip !== myDetectedIp) {
+                candidates.push(ip);
+            }
         }
 
         let foundAny = false;
         let checked = 0;
 
         candidates.forEach(ip => {
+            // Strictly skip self and loopback
+            if (ip === myDetectedIp || ip === 'localhost' || ip === '127.0.0.1') {
+                checked++;
+                return;
+            }
+
+            const probeStart = Date.now();
             const probeWs = new WebSocket(`ws://${ip}:5859`);
+            
             const probeTimeout = setTimeout(() => {
                 try { probeWs.close(); } catch(e) {}
                 checkDone();
-            }, 1200);
+            }, 1000);
 
             probeWs.onopen = () => {
                 clearTimeout(probeTimeout);
                 foundAny = true;
-                addDiscoveredCard(ip, 'DogRemote Linux Host', '1.1 ms');
+                const dynamicPing = Math.max(1, Date.now() - probeStart);
+                addDiscoveredCard(ip, 'DogRemote Host', `${dynamicPing} ms`);
                 try { probeWs.close(); } catch(e) {}
                 checkDone();
             };
@@ -542,12 +702,14 @@
 
             function checkDone() {
                 checked++;
-                if (checked === candidates.length && !foundAny) {
+                if (checked >= candidates.length && !foundAny) {
                     discoveredList.innerHTML = `
                         <div class="empty-state">
-                            <div class="empty-icon">🔍</div>
+                            <div class="empty-icon">
+                                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            </div>
                             <div class="empty-title">No Hosts Auto-Detected</div>
-                            <div class="empty-desc">Enter your PC's IP address directly in the Direct Connect box above.</div>
+                            <div class="empty-desc">Enter your host IP address directly in the Remote Connection box above.</div>
                         </div>
                     `;
                 }
@@ -555,7 +717,11 @@
         });
     }
 
-    function addDiscoveredCard(ip, name, ping) {
+    // Add Discovered Host Card (Strictly one card per unique IP)
+    function addDiscoveredCard(ip, name, pingStr) {
+        if (discoveredIps.has(ip)) return;
+        discoveredIps.add(ip);
+
         if (discoveredList.querySelector('.empty-state')) {
             discoveredList.innerHTML = '';
         }
@@ -564,16 +730,23 @@
         card.className = 'device-card';
         card.innerHTML = `
             <div class="device-info-left">
-                <div class="device-name">🖥️ ${name}</div>
-                <div class="device-ip">${ip} • <span style="color:#34d399;">⚡ ${ping}</span></div>
+                <div class="device-name">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:middle; margin-right:4px;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                    <span>${name}</span>
+                </div>
+                <div class="device-ip">${ip}:5859 • <span style="color:#34d399; font-weight:700;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" style="display:inline-block; vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> ${pingStr}</span></div>
             </div>
-            <button type="button" class="btn-secondary btn-xs connect-quick-btn">Connect</button>
+            <button type="button" class="btn-secondary btn-xs connect-quick-btn">
+                <span>Connect</span>
+            </button>
         `;
 
+        // Direct connect on click: connects immediately, prompting password popup if host requires one!
         card.querySelector('.connect-quick-btn').addEventListener('click', () => {
             remoteAddressInput.value = ip;
-            remotePinInput.focus();
-            showToast(`Selected ${ip}. Enter 6-digit PIN.`);
+            remotePortInput.value = '5859';
+            showToast(`Connecting to ${ip}...`);
+            startConnection(ip, 5859, remotePinInput.value.trim());
         });
 
         discoveredList.appendChild(card);

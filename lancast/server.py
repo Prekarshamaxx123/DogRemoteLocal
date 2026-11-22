@@ -29,6 +29,41 @@ from .protocol import (
 )
 from .audio import AudioCapture
 
+class WsClientWrapper:
+    """Zero-lag WebSocket frame dispatcher ensuring only the freshest frame is sent."""
+    def __init__(self, ws, loop):
+        self.ws = ws
+        self.loop = loop
+        self.is_sending = False
+        self.pending_frame = None
+
+    def push_frame(self, frame_bytes: bytes):
+        if not self.is_sending:
+            self.is_sending = True
+            try:
+                self.loop.call_soon_threadsafe(asyncio.create_task, self._send_frame(frame_bytes))
+            except Exception:
+                self.is_sending = False
+        else:
+            self.pending_frame = frame_bytes
+
+    async def _send_frame(self, frame_bytes: bytes):
+        try:
+            await self.ws.send(frame_bytes)
+        except Exception:
+            self.is_sending = False
+            return
+
+        if self.pending_frame is not None:
+            next_f = self.pending_frame
+            self.pending_frame = None
+            try:
+                self.loop.call_soon_threadsafe(asyncio.create_task, self._send_frame(next_f))
+            except Exception:
+                self.is_sending = False
+        else:
+            self.is_sending = False
+
 class LanCastServer:
     def __init__(self, host='0.0.0.0', port=5858, screen_rect=(0, 0, 1920, 1080)):
         self.host = host
@@ -51,6 +86,7 @@ class LanCastServer:
         self.on_client_left = None       # fn(session)
         self.on_clipboard_received = None# fn(text: str)
         self.on_screen_switch_requested = None  # fn(screen_idx: int)
+        self.on_quality_switch_requested = None # fn(quality_idx: int)
         
         self.screens_info = []
         self.active_screen_idx = 0
@@ -62,7 +98,7 @@ class LanCastServer:
         self._audio_capture = None
 
         self.ws_port = 5859
-        self.ws_clients = set()
+        self.ws_clients = {}
         self.ws_loop = None
 
     def start(self):
@@ -204,11 +240,8 @@ class LanCastServer:
     def broadcast_frame(self, jpeg_bytes: bytes):
         """Dispatches latest frame to all clients with zero queue lag."""
         if self.ws_loop and self.ws_clients:
-            for ws in list(self.ws_clients):
-                try:
-                    self.ws_loop.call_soon_threadsafe(asyncio.create_task, ws.send(jpeg_bytes))
-                except Exception:
-                    pass
+            for wrapper in list(self.ws_clients.values()):
+                wrapper.push_frame(jpeg_bytes)
 
         with self._lock:
             if not self.clients:
@@ -242,7 +275,7 @@ class LanCastServer:
             return
         if self.ws_loop and self.ws_clients:
             ws_msg = json.dumps({"type": "clipboard", "text": text})
-            for ws in list(self.ws_clients):
+            for ws in list(self.ws_clients.keys()):
                 try:
                     self.ws_loop.call_soon_threadsafe(asyncio.create_task, ws.send(ws_msg))
                 except Exception:
@@ -273,7 +306,7 @@ class LanCastServer:
                 "screen_index": screen_idx,
                 "screens": self.screens_info
             })
-            for ws in list(self.ws_clients):
+            for ws in list(self.ws_clients.keys()):
                 try:
                     self.ws_loop.call_soon_threadsafe(asyncio.create_task, ws.send(ws_msg))
                 except Exception:
@@ -379,12 +412,15 @@ class LanCastServer:
                         }))
                         return
 
-                self.ws_clients.add(websocket)
+                wrapper = WsClientWrapper(websocket, self.ws_loop)
+                self.ws_clients[websocket] = wrapper
+                client_ip = websocket.remote_address[0] if websocket.remote_address else "127.0.0.1"
                 await websocket.send(json.dumps({
                     "type": "connect_res",
                     "accepted": True,
                     "screens": self.screens_info,
-                    "active_screen": self.active_screen_idx
+                    "active_screen": self.active_screen_idx,
+                    "client_ip": client_ip
                 }))
                 print(f"[DogRemote] Mobile client connected & approved: {client_name}")
                 if self.on_client_joined:
@@ -398,12 +434,21 @@ class LanCastServer:
                     msg = json.loads(message)
                     mtype = msg.get("type")
                     if mtype == "ping":
-                        await websocket.send(json.dumps({"type": "pong", "ts": msg.get("ts")}))
+                        import time
+                        await websocket.send(json.dumps({
+                            "type": "pong",
+                            "client_ts": msg.get("ts"),
+                            "server_ts": int(time.time() * 1000)
+                        }))
                     elif mtype == "set_screen":
                         s_idx = msg.get("screen_index", 0)
                         if self.on_screen_switch_requested:
                             self.on_screen_switch_requested(s_idx)
                         self.broadcast_screen_changed(s_idx, self.screens_info)
+                    elif mtype == "set_quality":
+                        q_idx = int(msg.get("quality_index", 0))
+                        if self.on_quality_switch_requested:
+                            self.on_quality_switch_requested(q_idx)
                     elif mtype == "mouse_move":
                         self.execute_mouse_move(float(msg.get("x", 0.5)), float(msg.get("y", 0.5)))
                     elif mtype == "mouse_click":
@@ -425,7 +470,7 @@ class LanCastServer:
         except Exception:
             pass
         finally:
-            self.ws_clients.discard(websocket)
+            self.ws_clients.pop(websocket, None)
             print(f"[DogRemote] Mobile client disconnected: {client_name}")
             if self.on_client_left:
                 try:
