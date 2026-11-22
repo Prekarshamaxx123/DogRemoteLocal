@@ -123,6 +123,19 @@ class LanDiscovery:
                     remaining = [i for i in range(1, 255) if i != my_last and i not in nearby]
                     all_octets = nearby + remaining
 
+                    # Include active ARP neighbors first
+                    try:
+                        with open("/proc/net/arp", "r") as f:
+                            for line in f.readlines()[1:]:
+                                parts = line.split()
+                                if len(parts) >= 4 and parts[2] != "0x0" and parts[3] != "00:00:00:00:00:00":
+                                    a_ip = parts[0]
+                                    if a_ip != self.local_ip and not a_ip.endswith(".1"):
+                                        for p in target_ports:
+                                            targets.append((a_ip, p))
+                    except Exception:
+                        pass
+
                     for oct_val in all_octets:
                         ip = f"{prefix}.{oct_val}"
                         for p in target_ports:
@@ -161,22 +174,25 @@ class LanDiscovery:
             "port": port,
             "last_seen": time.time()
         }
+        is_new = False
         with self._lock:
             if dev_id in self.discovered_devices:
                 self.discovered_devices[dev_id]["last_seen"] = time.time()
-                return
-            self.discovered_devices[dev_id] = dev
+                self.discovered_devices[dev_id]["name"] = name
+            else:
+                self.discovered_devices[dev_id] = dev
+                is_new = True
 
         if self.on_device_found:
-            self.on_device_found(dev, True)
+            self.on_device_found(dev, is_new)
 
     def _clean_loop(self):
-        """Prunes dead devices after 25 seconds of silence."""
+        """Prunes dead devices after 180 seconds of silence."""
         while self.running:
-            time.sleep(5.0)
+            time.sleep(10.0)
             now = time.time()
             with self._lock:
-                expired = [k for k, v in self.discovered_devices.items() if now - v["last_seen"] > 25.0]
+                expired = [k for k, v in self.discovered_devices.items() if now - v["last_seen"] > 180.0]
                 for k in expired:
                     del self.discovered_devices[k]
 

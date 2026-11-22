@@ -742,7 +742,16 @@
                 foundAny = true;
                 const dynamicPing = Math.max(1, Date.now() - probeStart);
                 addDiscoveredCard(ip, 'DogRemote Host', `${dynamicPing} ms`);
-                try { probeWs.close(); } catch(e) {}
+                try {
+                    probeWs.send(JSON.stringify({
+                        type: 'peer_announce',
+                        name: 'DogRemote Mobile (Phone)',
+                        ip: myDetectedIp || ''
+                    }));
+                } catch(e) {}
+                setTimeout(() => {
+                    try { probeWs.close(); } catch(e) {}
+                }, 150);
                 checkDone();
             };
 
@@ -804,6 +813,30 @@
     }
 
     refreshDiscoveryBtn.addEventListener('click', discoverLocalDevices);
+
+    // Periodic announce heartbeat to keep mobile device discovered on Host PC
+    setInterval(() => {
+        discoveredIps.forEach(ip => {
+            try {
+                const wsAnnounce = new WebSocket(`ws://${ip}:5859`);
+                wsAnnounce.onopen = () => {
+                    try {
+                        wsAnnounce.send(JSON.stringify({
+                            type: 'peer_announce',
+                            name: 'DogRemote Mobile (Phone)',
+                            ip: myDetectedIp || ''
+                        }));
+                    } catch(e) {}
+                    setTimeout(() => {
+                        try { wsAnnounce.close(); } catch(e) {}
+                    }, 100);
+                };
+                wsAnnounce.onerror = () => {
+                    try { wsAnnounce.close(); } catch(e) {}
+                };
+            } catch(e) {}
+        });
+    }, 10000);
 
     // Initial Run
     discoverLocalDevices();

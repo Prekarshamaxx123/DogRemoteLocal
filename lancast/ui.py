@@ -1597,10 +1597,14 @@ class LanCastMainWindow(QMainWindow):
     def on_scan_finished(self):
         self.btn_rescan.setText("Refresh Scan")
         self.btn_rescan.setEnabled(True)
-        devices = self.discovery.get_devices()
+        devices = self.discovery.get_devices() if self.discovery else []
         if not devices:
             self.lbl_empty_devices.setText("Scan completed. No other DogRemote hosts detected on this subnet.")
             self.empty_state_frame.setVisible(True)
+        else:
+            self.empty_state_frame.setVisible(False)
+            for dev in devices:
+                self.on_device_discovered(dev, False)
 
     def prefill_and_connect(self, ip: str, port: int):
         self.txt_remote_ip.setText(ip)

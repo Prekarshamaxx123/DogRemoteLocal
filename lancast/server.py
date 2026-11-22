@@ -394,11 +394,31 @@ class LanCastServer:
 
     async def _handle_ws_client(self, websocket):
         client_name = "Mobile Device"
+        client_ip = websocket.remote_address[0] if websocket.remote_address else ""
+        if client_ip and not client_ip.startswith("127."):
+            if self.on_peer_detected:
+                try:
+                    self.on_peer_detected(client_ip, f"Mobile Device ({client_ip})", 5859)
+                except Exception:
+                    pass
+
         try:
             raw = await websocket.recv()
             if isinstance(raw, str):
                 data = json.loads(raw)
-                client_name = data.get("name", "Mobile Device")
+                client_name = data.get("name", client_name)
+                mtype = data.get("type", "")
+
+                if self.on_peer_detected and client_ip and not client_ip.startswith("127."):
+                    try:
+                        self.on_peer_detected(client_ip, client_name, 5859)
+                    except Exception:
+                        pass
+
+                if mtype == "peer_announce":
+                    await websocket.send(json.dumps({"type": "announce_ack"}))
+                    return
+
                 req_pwd = str(data.get("password", "")).strip()
 
                 if self.access_password:
@@ -415,13 +435,6 @@ class LanCastServer:
 
                 wrapper = WsClientWrapper(websocket, self.ws_loop)
                 self.ws_clients[websocket] = wrapper
-                client_ip = websocket.remote_address[0] if websocket.remote_address else "127.0.0.1"
-                if client_ip and not client_ip.startswith("127."):
-                    if self.on_peer_detected:
-                        try:
-                            self.on_peer_detected(client_ip, client_name, 5859)
-                        except Exception:
-                            pass
                 await websocket.send(json.dumps({
                     "type": "connect_res",
                     "accepted": True,
