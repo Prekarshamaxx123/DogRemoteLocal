@@ -74,6 +74,7 @@ class LanCastServer:
         self.screen_h = screen_rect[3]
         
         self.running = False
+        self.is_sharing = False
         self.auto_accept = False  # If no password, prompt user with interactive popup
         self.access_password = ""  # Set by host
         self.audio_enabled = True
@@ -88,6 +89,7 @@ class LanCastServer:
         self.on_screen_switch_requested = None  # fn(screen_idx: int)
         self.on_quality_switch_requested = None # fn(quality_idx: int)
         self.on_peer_detected = None            # fn(ip: str, name: str, port: int)
+        self.on_sharing_changed = None          # fn(enable: bool)
         
         self.screens_info = []
         self.active_screen_idx = 0
@@ -377,14 +379,33 @@ class LanCastServer:
                 await self._handle_ws_client(websocket)
 
             def proc_req(conn, req):
+                import http
+                if req.path.startswith("/api/share"):
+                    if "start" in req.path:
+                        self.is_sharing = True
+                        if self.on_sharing_changed:
+                            self.on_sharing_changed(True)
+                    elif "stop" in req.path:
+                        self.is_sharing = False
+                        if self.on_sharing_changed:
+                            self.on_sharing_changed(False)
+                    body = json.dumps({
+                        "service": "lancast",
+                        "sharing": bool(self.is_sharing)
+                    })
+                    res = conn.respond(http.HTTPStatus.OK, body)
+                    res.headers["Content-Type"] = "application/json"
+                    res.headers["Access-Control-Allow-Origin"] = "*"
+                    return res
+
                 # Respond to HTTP GET probes for auto-discovery
                 if req.path == "/info" or req.headers.get("Upgrade", "").lower() != "websocket":
-                    import http
                     body = json.dumps({
                         "service": "lancast",
                         "name": socket.gethostname(),
                         "host": socket.gethostname(),
-                        "port": self.ws_port
+                        "port": self.ws_port,
+                        "sharing": bool(self.is_sharing)
                     })
                     res = conn.respond(http.HTTPStatus.OK, body)
                     res.headers["Content-Type"] = "application/json"
@@ -429,7 +450,8 @@ class LanCastServer:
                     await websocket.send(json.dumps({
                         "type": "announce_ack",
                         "name": socket.gethostname(),
-                        "host": socket.gethostname()
+                        "host": socket.gethostname(),
+                        "sharing": bool(self.is_sharing)
                     }))
                     return
 

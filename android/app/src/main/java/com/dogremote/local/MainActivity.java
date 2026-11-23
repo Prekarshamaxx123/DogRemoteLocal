@@ -1,6 +1,8 @@
 package com.dogremote.local;
 
 import android.content.Context;
+import android.content.Intent;
+import android.media.projection.MediaProjectionManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -12,6 +14,7 @@ import android.util.Log;
 import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -20,6 +23,7 @@ import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -34,11 +38,13 @@ public class MainActivity extends BridgeActivity {
     private static final String TAG = "DogRemoteNative";
     private static final int UDP_PORT = 5857;
     private static final int TCP_PORT = 5859;
+    private static final int REQUEST_MEDIA_PROJECTION = 2026;
 
     private WifiManager.MulticastLock multicastLock;
     private ConnectivityManager connectivityManager;
     private volatile Network wifiNetwork = null;
     private volatile boolean isRunning = true;
+    private volatile boolean isSharingScreen = false;
     private DatagramSocket udpSocket;
     private ServerSocket tcpDiscoveryServer;
     private final Map<String, String> discoveredPeers = new ConcurrentHashMap<>();
@@ -85,8 +91,61 @@ public class MainActivity extends BridgeActivity {
             Log.w(TAG, "Could not acquire MulticastLock", e);
         }
 
+        // Expose Native JavaScript Bridge for Phone Screen Sharing
+        if (bridge != null && bridge.getWebView() != null) {
+            bridge.getWebView().addJavascriptInterface(new Object() {
+                @android.webkit.JavascriptInterface
+                public void startSharing() {
+                    runOnUiThread(() -> requestScreenCapture());
+                }
+
+                @android.webkit.JavascriptInterface
+                public void stopSharing() {
+                    runOnUiThread(() -> stopScreenCapture());
+                }
+            }, "DogRemoteNativeBridge");
+        }
+
         // Start Background UDP and TCP Discovery
         startDiscoveryWorker();
+    }
+
+    public void requestScreenCapture() {
+        MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (mpm != null) {
+            startActivityForResult(mpm.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION);
+        }
+    }
+
+    public void stopScreenCapture() {
+        isSharingScreen = false;
+        Intent serviceIntent = new Intent(this, ScreenShareService.class);
+        serviceIntent.setAction(ScreenShareService.ACTION_STOP);
+        startService(serviceIntent);
+        notifyWebviewPhoneSharingChanged(false);
+    }
+
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_MEDIA_PROJECTION) {
+            if (resultCode == RESULT_OK && data != null) {
+                isSharingScreen = true;
+                Intent serviceIntent = new Intent(this, ScreenShareService.class);
+                serviceIntent.setAction(ScreenShareService.ACTION_START);
+                serviceIntent.putExtra("resultCode", resultCode);
+                serviceIntent.putExtra("data", data);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent);
+                } else {
+                    startService(serviceIntent);
+                }
+                notifyWebviewPhoneSharingChanged(true);
+            } else {
+                isSharingScreen = false;
+                notifyWebviewPhoneSharingChanged(false);
+            }
+        }
     }
 
     private void setupWifiBinding() {
@@ -129,7 +188,9 @@ public class MainActivity extends BridgeActivity {
                 public void onLost(Network network) {
                     if (network.equals(wifiNetwork)) {
                         wifiNetwork = null;
-                        Log.d(TAG, "Physical Wi-Fi network lost");
+                        Log.d(TAG, "Physical Wi-Fi network lost - clearing discovered peers");
+                        discoveredPeers.clear();
+                        notifyWebviewDisconnected();
                     }
                 }
             });
@@ -142,17 +203,18 @@ public class MainActivity extends BridgeActivity {
         isRunning = true;
         final String deviceName = getDeviceName();
 
-        // 1. UDP Broadcast Beacon loop (Announce phone presence every 2.5 seconds to all devices on LAN)
+        // 1. UDP Broadcast Beacon loop (Broadcast presence ONLY when actively sharing phone screen)
         new Thread(() -> {
             while (isRunning) {
                 try {
                     String localIp = getLocalIpAddress();
-                    if (localIp != null && !localIp.isEmpty()) {
+                    if (localIp != null && isSharingScreen) {
                         JSONObject json = new JSONObject();
                         json.put("service", "lancast");
                         json.put("name", deviceName);
                         json.put("ip", localIp);
                         json.put("port", TCP_PORT);
+                        json.put("sharing", true);
                         byte[] data = json.toString().getBytes("UTF-8");
 
                         DatagramSocket socket = new DatagramSocket();
@@ -160,33 +222,29 @@ public class MainActivity extends BridgeActivity {
 
                         // Limited broadcast
                         try {
-                            DatagramPacket packet = new DatagramPacket(
-                                data, data.length, InetAddress.getByName("255.255.255.255"), UDP_PORT
-                            );
-                            socket.send(packet);
+                            socket.send(new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"), UDP_PORT));
                         } catch (Exception ignored) {}
 
-                        // Directed subnet broadcast (e.g. 192.168.8.255)
+                        // Directed subnet broadcast
                         try {
                             int lastDot = localIp.lastIndexOf('.');
                             if (lastDot > 0) {
                                 String bcast = localIp.substring(0, lastDot) + ".255";
-                                DatagramPacket packet = new DatagramPacket(
-                                    data, data.length, InetAddress.getByName(bcast), UDP_PORT
-                                );
-                                socket.send(packet);
+                                socket.send(new DatagramPacket(data, data.length, InetAddress.getByName(bcast), UDP_PORT));
                             }
                         } catch (Exception ignored) {}
 
                         // Direct unicast to Linux PC host
                         try {
-                            DatagramPacket packet = new DatagramPacket(
-                                data, data.length, InetAddress.getByName("192.168.8.185"), UDP_PORT
-                            );
-                            socket.send(packet);
+                            socket.send(new DatagramPacket(data, data.length, InetAddress.getByName("192.168.8.185"), UDP_PORT));
                         } catch (Exception ignored) {}
 
                         socket.close();
+                    } else if (localIp == null) {
+                        if (!discoveredPeers.isEmpty()) {
+                            discoveredPeers.clear();
+                            notifyWebviewDisconnected();
+                        }
                     }
                 } catch (Exception e) {
                     Log.v(TAG, "Beacon send error: " + e.getMessage());
@@ -229,12 +287,17 @@ public class MainActivity extends BridgeActivity {
                         String service = obj.optString("service", "");
                         if ("lancast".equalsIgnoreCase(service)) {
                             String name = obj.optString("name", "DogRemote Host");
+                            boolean peerSharing = obj.optBoolean("sharing", false);
                             if (name.toLowerCase().contains("mobile") || name.toLowerCase().contains("phone") || name.toLowerCase().contains("samsung")) {
                                 continue;
                             }
-                            Log.d(TAG, "Discovered Host via UDP: " + hostIp + " (" + name + ")");
-                            discoveredPeers.put(hostIp, name);
-                            notifyWebviewDeviceDiscovered(hostIp, name);
+                            if (peerSharing) {
+                                discoveredPeers.put(hostIp, name);
+                                notifyWebviewDeviceDiscovered(hostIp, name, true);
+                            } else {
+                                discoveredPeers.remove(hostIp);
+                                notifyWebviewDeviceLost(hostIp);
+                            }
                         }
                     } catch (Exception ignored) {}
                 }
@@ -243,44 +306,76 @@ public class MainActivity extends BridgeActivity {
             }
         }, "DogRemote-UdpListener").start();
 
-        // 3. TCP Discovery Server loop (Port 5859 responder for PC subnet scans)
+        // 3. TCP Server loop (Responds to HTTP GET /info probes, and serves stream when sharing)
         new Thread(() -> {
             try {
                 tcpDiscoveryServer = new ServerSocket();
                 tcpDiscoveryServer.setReuseAddress(true);
                 tcpDiscoveryServer.bind(new InetSocketAddress(InetAddress.getByName("0.0.0.0"), TCP_PORT));
-                Log.d(TAG, "TCP Discovery Server listening on 0.0.0.0:" + TCP_PORT);
+                Log.d(TAG, "TCP Server listening on 0.0.0.0:" + TCP_PORT);
                 while (isRunning) {
                     try {
                         Socket client = tcpDiscoveryServer.accept();
-                        client.setSoTimeout(1500);
-                        String localIp = getLocalIpAddress();
-                        JSONObject json = new JSONObject();
-                        json.put("service", "lancast");
-                        json.put("name", deviceName);
-                        json.put("ip", localIp != null ? localIp : "");
-                        json.put("port", TCP_PORT);
-                        byte[] data = (json.toString() + "\n").getBytes("UTF-8");
-                        OutputStream os = client.getOutputStream();
-                        os.write(data);
-                        os.flush();
+                        client.setSoTimeout(3000);
+                        InputStream is = client.getInputStream();
+                        byte[] head = new byte[5];
+                        int r = is.read(head);
 
-                        // Bilateral discovery: notify WebView about the host that probed us
-                        String peerIp = client.getInetAddress().getHostAddress();
-                        if (peerIp != null && peerIp.startsWith("::ffff:")) {
-                            peerIp = peerIp.substring(7);
+                        if (r > 0) {
+                            // Check if HTTP GET probe (e.g. "GET /info")
+                            if (head[0] == 'G' && head[1] == 'E' && head[2] == 'T') {
+                                String localIp = getLocalIpAddress();
+                                String body = "{\"service\":\"lancast\",\"name\":\"" + deviceName + "\",\"ip\":\"" + (localIp != null ? localIp : "") + "\",\"port\":5859,\"sharing\":" + isSharingScreen + "}";
+                                String resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + body.length() + "\r\nConnection: close\r\n\r\n" + body;
+                                client.getOutputStream().write(resp.getBytes("UTF-8"));
+                                client.getOutputStream().flush();
+                                client.close();
+                            } else if (head[0] == 2) { // TYPE_CONNECT_REQ (LanCast streaming client connecting to phone!)
+                                if (isSharingScreen) {
+                                    // Accept connection and start streaming phone frames to PC
+                                    JSONObject resJson = new JSONObject();
+                                    resJson.put("accepted", true);
+                                    JSONObject perms = new JSONObject();
+                                    perms.put("screen", true);
+                                    perms.put("control", false);
+                                    perms.put("audio", false);
+                                    resJson.put("permissions", perms);
+                                    byte[] payload = resJson.toString().getBytes("UTF-8");
+
+                                    ByteBuffer bb = ByteBuffer.allocate(1 + 4 + payload.length);
+                                    bb.put((byte) 3); // TYPE_CONNECT_RES
+                                    bb.putInt(payload.length);
+                                    bb.put(payload);
+                                    client.getOutputStream().write(bb.array());
+                                    client.getOutputStream().flush();
+
+                                    // Add to streaming clients
+                                    ScreenShareService.addStreamingClient(client);
+                                    continue; // Do NOT close client socket!
+                                } else {
+                                    // Reject: screen sharing is not active
+                                    JSONObject resJson = new JSONObject();
+                                    resJson.put("accepted", false);
+                                    resJson.put("reason", "Phone screen sharing is not active");
+                                    byte[] payload = resJson.toString().getBytes("UTF-8");
+                                    ByteBuffer bb = ByteBuffer.allocate(1 + 4 + payload.length);
+                                    bb.put((byte) 3);
+                                    bb.putInt(payload.length);
+                                    bb.put(payload);
+                                    client.getOutputStream().write(bb.array());
+                                    client.getOutputStream().flush();
+                                    client.close();
+                                }
+                            } else {
+                                client.close();
+                            }
+                        } else {
+                            client.close();
                         }
-                        if (peerIp != null && !isLocalIpAddress(peerIp)) {
-                            Log.d(TAG, "Discovered Host via TCP Probe: " + peerIp);
-                            String hostName = "DogRemote Host (" + peerIp + ")";
-                            discoveredPeers.put(peerIp, hostName);
-                            notifyWebviewDeviceDiscovered(peerIp, hostName);
-                        }
-                        client.close();
                     } catch (Exception ignored) {}
                 }
             } catch (Exception e) {
-                Log.d(TAG, "TCP Discovery Server stopped: " + e.getMessage());
+                Log.d(TAG, "TCP Server stopped: " + e.getMessage());
             }
         }, "DogRemote-TcpResponder").start();
 
@@ -328,7 +423,7 @@ public class MainActivity extends BridgeActivity {
                     Thread.sleep(2000);
                     if (!discoveredPeers.isEmpty()) {
                         for (Map.Entry<String, String> entry : discoveredPeers.entrySet()) {
-                            notifyWebviewDeviceDiscovered(entry.getKey(), entry.getValue());
+                            notifyWebviewDeviceDiscovered(entry.getKey(), entry.getValue(), true);
                         }
                     }
                 } catch (InterruptedException e) {
@@ -355,7 +450,7 @@ public class MainActivity extends BridgeActivity {
             s.connect(new InetSocketAddress(ip, port), 1200);
             s.setSoTimeout(1500);
 
-            // Send HTTP GET /info for instant host identity discovery
+            // Send HTTP GET /info for instant host identity and sharing status
             String req = "GET /info HTTP/1.1\r\nHost: " + ip + ":" + port + "\r\nConnection: close\r\n\r\n";
             s.getOutputStream().write(req.getBytes("UTF-8"));
             s.getOutputStream().flush();
@@ -367,6 +462,7 @@ public class MainActivity extends BridgeActivity {
             if (n > 0) {
                 String resp = new String(buf, 0, n, "UTF-8");
                 String hostName = "DogRemote Host";
+                boolean isSharing = false;
                 if (resp.contains("{")) {
                     try {
                         int start = resp.indexOf('{');
@@ -377,16 +473,22 @@ public class MainActivity extends BridgeActivity {
                             if (!parsedName.isEmpty()) {
                                 hostName = parsedName;
                             }
+                            isSharing = obj.optBoolean("sharing", false);
                         }
                     } catch (Exception ignored) {}
                 }
-                Log.d(TAG, "VERIFIED DogRemote Host: " + ip + " (" + hostName + ")");
-                discoveredPeers.put(ip, hostName);
-                notifyWebviewDeviceDiscovered(ip, hostName);
+                if (isSharing) {
+                    Log.d(TAG, "VERIFIED DogRemote Host (Sharing Screen): " + ip + " (" + hostName + ")");
+                    discoveredPeers.put(ip, hostName);
+                    notifyWebviewDeviceDiscovered(ip, hostName, true);
+                } else {
+                    discoveredPeers.remove(ip);
+                    notifyWebviewDeviceLost(ip);
+                }
             }
         } catch (Exception e) {
             if ("192.168.8.185".equals(ip)) {
-                Log.w(TAG, "Probe to 192.168.8.185:" + port + " failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                Log.v(TAG, "Probe to 192.168.8.185:" + port + " failed: " + e.getMessage());
             }
         }
     }
@@ -408,14 +510,55 @@ public class MainActivity extends BridgeActivity {
         return false;
     }
 
-    private void notifyWebviewDeviceDiscovered(final String ip, final String name) {
+    private void notifyWebviewDeviceDiscovered(final String ip, final String name, final boolean sharing) {
         runOnUiThread(() -> {
             try {
                 if (bridge != null && bridge.getWebView() != null) {
                     String safeName = name.replace("'", "\\'");
                     String myName = getDeviceName().replace("'", "\\'");
                     String js = "window.myDeviceName = '" + myName + "'; " +
-                                "if (window.onPeerDiscovered) { window.onPeerDiscovered('" + ip + "', '" + safeName + "'); }";
+                                "window.startPhoneScreenShare = function() { if (window.DogRemoteNativeBridge) window.DogRemoteNativeBridge.startSharing(); }; " +
+                                "window.stopPhoneScreenShare = function() { if (window.DogRemoteNativeBridge) window.DogRemoteNativeBridge.stopSharing(); }; " +
+                                "if (window.onPeerDiscovered) { window.onPeerDiscovered('" + ip + "', '" + safeName + "', " + sharing + "); }";
+                    bridge.getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Error evaluating JS", e);
+            }
+        });
+    }
+
+    private void notifyWebviewDeviceLost(final String ip) {
+        runOnUiThread(() -> {
+            try {
+                if (bridge != null && bridge.getWebView() != null) {
+                    String js = "if (window.onPeerLost) { window.onPeerLost('" + ip + "'); }";
+                    bridge.getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Error evaluating JS", e);
+            }
+        });
+    }
+
+    private void notifyWebviewDisconnected() {
+        runOnUiThread(() -> {
+            try {
+                if (bridge != null && bridge.getWebView() != null) {
+                    String js = "if (window.clearDiscoveredDevices) { window.clearDiscoveredDevices('Wi-Fi Disconnected'); }";
+                    bridge.getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Error evaluating JS", e);
+            }
+        });
+    }
+
+    private void notifyWebviewPhoneSharingChanged(final boolean active) {
+        runOnUiThread(() -> {
+            try {
+                if (bridge != null && bridge.getWebView() != null) {
+                    String js = "if (window.setPhoneSharingState) { window.setPhoneSharingState(" + active + "); }";
                     bridge.getWebView().evaluateJavascript(js, null);
                 }
             } catch (Exception e) {
@@ -427,7 +570,6 @@ public class MainActivity extends BridgeActivity {
     private String getLocalIpAddress() {
         try {
             List<NetworkInterface> interfaces = Collections.list(NetworkInterface.getNetworkInterfaces());
-            // Prioritize Wi-Fi interface (wlan, eth)
             for (NetworkInterface intf : interfaces) {
                 if (intf.isLoopback() || !intf.isUp()) continue;
                 String ifName = intf.getName().toLowerCase();
@@ -442,27 +584,16 @@ public class MainActivity extends BridgeActivity {
                     }
                 }
             }
-            // Fallback: any standard private LAN IP (192.168.x.x, 10.x.x.x, 172.x.x.x)
-            for (NetworkInterface intf : interfaces) {
-                if (intf.isLoopback() || !intf.isUp()) continue;
-                String ifName = intf.getName().toLowerCase();
-                if (ifName.contains("tun") || ifName.contains("dummy") || ifName.contains("p2p")) continue;
-                for (InetAddress addr : Collections.list(intf.getInetAddresses())) {
-                    if (!addr.isLoopbackAddress() && addr.getAddress().length == 4) {
-                        String ip = addr.getHostAddress();
-                        if (ip != null && (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172."))) {
-                            return ip;
-                        }
-                    }
-                }
-            }
         } catch (Exception ignored) {}
-        return "192.168.8.169";
+        return null;
     }
 
     @Override
     public void onDestroy() {
         isRunning = false;
+        if (isSharingScreen) {
+            stopScreenCapture();
+        }
         if (udpSocket != null && !udpSocket.isClosed()) {
             udpSocket.close();
         }

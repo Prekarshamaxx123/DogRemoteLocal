@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QPixmap, QPainter, QColor, QFont, QCursor, QGuiApplication,
-    QIcon, QLinearGradient, QBrush, QPen
+    QIcon, QLinearGradient, QBrush, QPen, QPolygon
 )
 from PyQt6.QtCore import (
     Qt, QTimer, pyqtSignal, QObject, QBuffer, QIODevice, QPoint, QSize
@@ -329,6 +329,7 @@ def get_local_ip():
 
 class SignalBridge(QObject):
     device_discovered = pyqtSignal(dict, bool)
+    device_lost = pyqtSignal(str)
     scan_finished = pyqtSignal()
     incoming_request = pyqtSignal(object, dict)
     client_joined = pyqtSignal(object)
@@ -341,6 +342,7 @@ class SignalBridge(QObject):
     screen_switch_requested = pyqtSignal(int)
     screen_changed = pyqtSignal(int, list)
     rtt_updated = pyqtSignal(float)
+    sharing_toggled = pyqtSignal(bool)
 
 
 # ========================================================
@@ -868,21 +870,55 @@ class ScreenCaptureWorker(threading.Thread):
                     pix = QGuiApplication.primaryScreen().grabWindow(0)
 
                 if pix and not pix.isNull():
+                    # Draw system mouse cursor directly onto frame for stream viewers
+                    try:
+                        cursor_pos = QCursor.pos()
+                        if screen_idx == -1:
+                            vgeom = QGuiApplication.primaryScreen().virtualGeometry()
+                            cur_x = cursor_pos.x() - vgeom.x()
+                            cur_y = cursor_pos.y() - vgeom.y()
+                        elif 0 <= screen_idx < len(screens):
+                            sgeo = screens[screen_idx].geometry()
+                            cur_x = cursor_pos.x() - sgeo.x()
+                            cur_y = cursor_pos.y() - sgeo.y()
+                        else:
+                            sgeo = QGuiApplication.primaryScreen().geometry()
+                            cur_x = cursor_pos.x() - sgeo.x()
+                            cur_y = cursor_pos.y() - sgeo.y()
+
+                        if 0 <= cur_x < pix.width() and 0 <= cur_y < pix.height():
+                            cpainter = QPainter(pix)
+                            cpainter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                            arrow = QPolygon([
+                                QPoint(cur_x, cur_y),
+                                QPoint(cur_x, cur_y + 19),
+                                QPoint(cur_x + 5, cur_y + 14),
+                                QPoint(cur_x + 9, cur_y + 23),
+                                QPoint(cur_x + 12, cur_y + 21),
+                                QPoint(cur_x + 8, cur_y + 13),
+                                QPoint(cur_x + 14, cur_y + 13),
+                            ])
+                            cpainter.setBrush(QBrush(QColor(255, 255, 255)))
+                            cpainter.setPen(QPen(QColor(0, 0, 0), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+                            cpainter.drawPolygon(arrow)
+                            cpainter.end()
+                    except Exception:
+                        pass
+
                     q_idx = self.win.selected_quality_idx
                     if q_idx == 0:    # Native Display Resolution (Ultra Crisp 100% • Original Clarity)
-                        # Pixel-perfect 100% original display resolution, no blur, high quality JPEG
-                        quality = 80
-                        target_interval = 0.016
+                        quality = 72
+                        target_interval = 0.012
                     elif q_idx == 1:  # 1080p Full HD (Crisp • Smooth 60 FPS)
                         if pix.width() > 1920:
-                            pix = pix.scaledToWidth(1920, Qt.TransformationMode.SmoothTransformation)
-                        quality = 75
-                        target_interval = 0.016
+                            pix = pix.scaledToWidth(1920, Qt.TransformationMode.FastTransformation)
+                        quality = 70
+                        target_interval = 0.012
                     else:             # 720p HD (Balanced • Low Bandwidth)
                         if pix.width() > 1280:
-                            pix = pix.scaledToWidth(1280, Qt.TransformationMode.SmoothTransformation)
-                        quality = 65
-                        target_interval = 0.016
+                            pix = pix.scaledToWidth(1280, Qt.TransformationMode.FastTransformation)
+                        quality = 62
+                        target_interval = 0.012
 
                     buf = QBuffer()
                     buf.open(QIODevice.OpenModeFlag.WriteOnly)
@@ -1274,6 +1310,7 @@ class LanCastMainWindow(QMainWindow):
         self.server.on_screen_switch_requested = lambda sid: self.bridge.screen_switch_requested.emit(sid)
         self.server.on_quality_switch_requested = self.on_quality_selected
         self.server.on_peer_detected = lambda ip, name, port: self.discovery._register_device(ip=ip, name=name, port=port) if self.discovery else None
+        self.server.on_sharing_changed = lambda val: self.bridge.sharing_toggled.emit(val)
         self.update_available_screens()
         self.server.start()
         
@@ -1289,12 +1326,15 @@ class LanCastMainWindow(QMainWindow):
             device_name=self.my_name,
             local_ip=self.my_ip,
             tcp_port=self.server.port,
-            on_device_found=lambda dev, is_new: self.bridge.device_discovered.emit(dev, is_new)
+            on_device_found=lambda dev, is_new: self.bridge.device_discovered.emit(dev, is_new),
+            on_device_lost=lambda dev_id: self.bridge.device_lost.emit(dev_id),
+            is_sharing_fn=lambda: self.is_sharing
         )
         self.discovery.start()
 
         # Connect signals
         self.bridge.device_discovered.connect(self.on_device_discovered)
+        self.bridge.device_lost.connect(self.on_device_lost)
         self.bridge.scan_finished.connect(self.on_scan_finished)
         self.bridge.incoming_request.connect(self.on_incoming_request)
         self.bridge.client_joined.connect(self.on_client_joined)
@@ -1303,6 +1343,13 @@ class LanCastMainWindow(QMainWindow):
         self.bridge.connected.connect(self.open_viewer_window)
         self.bridge.rejected.connect(self.on_connection_rejected)
         self.bridge.clipboard_received.connect(self.on_clipboard_from_viewer)
+        self.bridge.sharing_toggled.connect(self.on_external_sharing_toggled)
+
+    def on_external_sharing_toggled(self, enable: bool):
+        if enable and not self.is_sharing:
+            self.start_sharing()
+        elif not enable and self.is_sharing:
+            self.stop_sharing()
 
     def on_password_toggle(self, checked):
         self.txt_host_pwd.setEnabled(checked)
@@ -1436,6 +1483,8 @@ class LanCastMainWindow(QMainWindow):
 
     def start_sharing(self):
         self.is_sharing = True
+        if self.server:
+            self.server.is_sharing = True
         self.btn_share.setText("Stop Sharing Screen")
         self.btn_share.setProperty("class", "btn-danger-cta")
         self.btn_share.setStyleSheet("""
@@ -1457,6 +1506,7 @@ class LanCastMainWindow(QMainWindow):
     def stop_sharing(self):
         self.is_sharing = False
         if self.server:
+            self.server.is_sharing = False
             self.server.stop_audio()
         self.btn_share.setText("Start Sharing Screen")
         self.btn_share.setProperty("class", "btn-cta")
@@ -1589,6 +1639,24 @@ class LanCastMainWindow(QMainWindow):
 
         self.discovered_layout.insertWidget(self.discovered_layout.count() - 1, item)
         item.show()
+
+    def on_device_lost(self, dev_id: str):
+        target_id = f"dev_{dev_id.replace('.', '_')}"
+        for i in range(self.discovered_layout.count()):
+            w = self.discovered_layout.itemAt(i).widget()
+            if w and w.objectName() == target_id:
+                w.deleteLater()
+                break
+        QTimer.singleShot(150, self._check_empty_discovered)
+
+    def _check_empty_discovered(self):
+        count = 0
+        for i in range(self.discovered_layout.count()):
+            w = self.discovered_layout.itemAt(i).widget()
+            if w and w != self.empty_state_frame and w.objectName().startswith("dev_"):
+                count += 1
+        if count == 0:
+            self.empty_state_frame.setVisible(True)
 
     def trigger_subnet_scan(self):
         if self.discovery and not self.discovery.is_scanning:

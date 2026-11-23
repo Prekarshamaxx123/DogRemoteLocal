@@ -13,15 +13,17 @@ from concurrent.futures import ThreadPoolExecutor
 UDP_DISCOVERY_PORT = 5857
 
 class LanDiscovery:
-    def __init__(self, device_name: str, local_ip: str, tcp_port: int = 5858, on_device_found=None):
+    def __init__(self, device_name: str, local_ip: str, tcp_port: int = 5858, on_device_found=None, on_device_lost=None, is_sharing_fn=None):
         self.device_name = device_name
         self.local_ip = local_ip
         self.tcp_port = tcp_port
         self.on_device_found = on_device_found
+        self.on_device_lost = on_device_lost
+        self.is_sharing_fn = is_sharing_fn
         
         self.running = False
         self.is_scanning = False
-        self.discovered_devices = {}  # "ip:port" -> dict
+        self.discovered_devices = {}  # "ip" -> dict
         self._lock = threading.Lock()
         self._threads = []
 
@@ -39,19 +41,26 @@ class LanDiscovery:
         self.running = False
 
     def _broadcast_loop(self):
-        """Periodically broadcast UDP beacon to advertise presence on local network."""
+        """Periodically broadcast UDP beacon to advertise presence on local network when sharing."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.settimeout(1.0)
 
-        payload = json.dumps({
-            "service": "lancast",
-            "name": self.device_name,
-            "ip": self.local_ip,
-            "port": self.tcp_port
-        }).encode('utf-8')
-
         while self.running:
+            # Only broadcast if actively sharing screen
+            is_sharing = True if not self.is_sharing_fn else bool(self.is_sharing_fn())
+            if not is_sharing:
+                time.sleep(1.0)
+                continue
+
+            payload = json.dumps({
+                "service": "lancast",
+                "name": self.device_name,
+                "ip": self.local_ip,
+                "port": self.tcp_port,
+                "sharing": True
+            }).encode('utf-8')
+
             try:
                 # 1. Limited broadcast
                 sock.sendto(payload, ('255.255.255.255', UDP_DISCOVERY_PORT))
@@ -102,15 +111,19 @@ class LanDiscovery:
                 if msg.get("service") == "lancast":
                     peer_ip = msg.get("ip") or addr[0]
                     peer_port = int(msg.get("port", 5858))
+                    peer_sharing = msg.get("sharing", False)
                     
                     if peer_ip == self.local_ip or peer_ip.startswith("127."):
                         continue
                     
-                    self._register_device(
-                        ip=peer_ip,
-                        name=msg.get("name", f"Device-{peer_ip}"),
-                        port=peer_port
-                    )
+                    if peer_sharing:
+                        self._register_device(
+                            ip=peer_ip,
+                            name=msg.get("name", f"Device-{peer_ip}"),
+                            port=peer_port
+                        )
+                    else:
+                        self._remove_device(peer_ip)
             except (socket.timeout, json.JSONDecodeError):
                 continue
             except Exception:
@@ -184,6 +197,7 @@ class LanDiscovery:
             res = s.connect_ex((ip, port))
             if res == 0:
                 name = None
+                is_sharing = False
                 s.settimeout(0.4)
                 # 1. Check if peer immediately sends a banner (e.g. Android TCP responder)
                 try:
@@ -192,11 +206,13 @@ class LanDiscovery:
                         info = json.loads(data.decode('utf-8').strip())
                         if "name" in info:
                             name = info["name"]
+                        if "sharing" in info:
+                            is_sharing = bool(info["sharing"])
                 except Exception:
                     pass
 
                 # 2. If no immediate banner, send HTTP GET /info
-                if not name:
+                if not name or not is_sharing:
                     try:
                         req = f"GET /info HTTP/1.1\r\nHost: {ip}:{port}\r\nConnection: close\r\n\r\n"
                         s.sendall(req.encode('utf-8'))
@@ -207,13 +223,18 @@ class LanDiscovery:
                             info = json.loads(body)
                             if "name" in info:
                                 name = info["name"]
+                            if "sharing" in info:
+                                is_sharing = bool(info["sharing"])
                     except Exception:
                         pass
 
                 s.close()
-                if not name:
-                    name = f"DogRemote Host ({ip})"
-                self._register_device(ip=ip, name=name, port=port)
+                if is_sharing:
+                    if not name:
+                        name = f"DogRemote Host ({ip})"
+                    self._register_device(ip=ip, name=name, port=port)
+                else:
+                    self._remove_device(ip)
             else:
                 s.close()
         except Exception:
@@ -246,14 +267,29 @@ class LanDiscovery:
             self.on_device_found(dev, is_new)
 
     def _clean_loop(self):
-        """Prunes dead devices after 300 seconds of silence."""
+        """Prunes dead devices after 5 seconds of silence."""
         while self.running:
-            time.sleep(15.0)
+            time.sleep(2.0)
             now = time.time()
+            expired = []
             with self._lock:
-                expired = [k for k, v in self.discovered_devices.items() if now - v["last_seen"] > 300.0]
-                for k in expired:
-                    del self.discovered_devices[k]
+                for k, v in list(self.discovered_devices.items()):
+                    if now - v["last_seen"] > 5.0:
+                        expired.append(k)
+                        del self.discovered_devices[k]
+            for k in expired:
+                if self.on_device_lost:
+                    self.on_device_lost(k)
+
+    def _remove_device(self, ip: str):
+        dev_id = ip
+        removed = False
+        with self._lock:
+            if dev_id in self.discovered_devices:
+                del self.discovered_devices[dev_id]
+                removed = True
+        if removed and self.on_device_lost:
+            self.on_device_lost(dev_id)
 
     def get_devices(self):
         with self._lock:

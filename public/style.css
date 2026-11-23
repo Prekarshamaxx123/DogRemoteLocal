@@ -504,27 +504,32 @@ html, body {
 /* Floating HUD */
 .viewer-hud {
     position: absolute;
-    top: env(safe-area-inset-top, 10px);
-    left: 12px;
-    right: 12px;
-    height: 44px;
-    background: rgba(13, 18, 34, 0.88);
+    top: env(safe-area-inset-top, 8px);
+    left: 8px;
+    right: 8px;
+    height: 42px;
+    background: rgba(13, 18, 34, 0.94);
     backdrop-filter: blur(14px);
     border: 1px solid var(--border-subtle);
     border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 10px;
+    padding: 0 8px;
     z-index: 600;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    box-sizing: border-box;
+    overflow: hidden;
     transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 .hud-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 38%;
 }
 
 .hud-brand {
@@ -539,36 +544,42 @@ html, body {
     color: #ffffff;
     font-size: 11px;
     font-weight: 600;
-    padding: 4px 8px;
+    padding: 4px 6px;
     border-radius: 6px;
     outline: none;
+    max-width: 95px;
+    min-width: 55px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    flex-shrink: 1;
 }
 
 .hud-center {
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
-    margin: 0 4px;
+    flex: 0 0 auto;
+    margin: 0 2px;
 }
 
 .hud-badge {
-    height: 26px;
-    line-height: 26px;
+    height: 24px;
+    line-height: 24px;
     background: rgba(16, 185, 129, 0.15);
     border: 1px solid rgba(16, 185, 129, 0.35);
     color: #34d399;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
-    padding: 0 10px;
-    border-radius: 13px;
+    padding: 0 6px;
+    border-radius: 12px;
     font-family: monospace;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    gap: 4px;
     white-space: nowrap;
-    align-self: center;
+    flex-shrink: 0;
     box-sizing: border-box;
 }
 
@@ -581,7 +592,7 @@ html, body {
     padding: 8px 10px;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     flex-shrink: 0;
 }
 
@@ -594,7 +605,9 @@ html, body {
 .hud-right {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
+    flex: 0 0 auto;
+    margin-left: auto;
 }
 
 .btn-hud {
@@ -602,23 +615,27 @@ html, body {
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: #ffffff;
     border-radius: 7px;
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
+    flex-shrink: 0;
 }
 
 .btn-hud-danger {
-    background: #dc2626;
-    border-color: #ef4444;
+    background: #dc2626 !important;
+    border: 1.5px solid #ef4444 !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.4);
 }
 
 /* Canvas Viewport */
 .canvas-wrapper {
+    position: relative;
     flex: 1;
     width: 100%;
     height: 100%;
@@ -628,6 +645,8 @@ html, body {
     background-color: #000000;
     overflow: hidden;
     touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #screenCanvas {
@@ -635,6 +654,29 @@ html, body {
     max-height: 100%;
     object-fit: contain;
     display: block;
+    transform-origin: center center;
+    transition: transform 0.05s ease-out;
+}
+
+/* Virtual Mouse Pointer for Trackpad Mode */
+.virtual-cursor {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    pointer-events: none;
+    z-index: 550;
+    transform: translate(-100px, -100px);
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
+    transition: transform 0.04s linear;
+}
+
+.btn-share-phone {
+    background: linear-gradient(135deg, #8b5cf6 0%, #6366f1 100%);
+    margin-top: 6px;
+}
+.btn-share-phone.active-sharing {
+    background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%) !important;
+    box-shadow: 0 6px 18px rgba(220, 38, 38, 0.4) !important;
 }
 
 /* Bottom Virtual Key Toolbar */

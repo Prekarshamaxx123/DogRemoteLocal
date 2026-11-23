@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['/home/kali/Projects/same network screen share/main.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[('public', 'public')],

@@ -25,6 +25,8 @@ def main():
         app.setWindowIcon(QIcon(icon_path))
 
     window = LanCastMainWindow()
+    if "--share" in sys.argv or "-s" in sys.argv:
+        window.start_sharing()
     window.show()
 
     sys.exit(app.exec())
