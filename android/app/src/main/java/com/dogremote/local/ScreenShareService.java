@@ -16,10 +16,12 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
@@ -50,6 +52,8 @@ public class ScreenShareService extends Service {
     private HandlerThread captureThread;
     private Handler captureHandler;
     private Thread heartbeatThread = null;
+    private PowerManager.WakeLock wakeLock = null;
+    private WifiManager.WifiLock wifiLock = null;
     private volatile boolean isCapturing = false;
     private volatile byte[] lastFrameBytes = null;
     private long lastFrameTime = 0;
@@ -252,6 +256,29 @@ public class ScreenShareService extends Service {
 
             isCapturing = true;
 
+            // Acquire WakeLock and WifiLock to prevent Wi-Fi power-save dropping incoming streaming connections
+            try {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null) {
+                    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DogRemote::ScreenShareWakeLock");
+                    wakeLock.setReferenceCounted(false);
+                    wakeLock.acquire(60 * 60 * 1000L); // Max 1 hour safety timeout
+                }
+                WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "DogRemote::ScreenShareWifiLock");
+                    } else {
+                        wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "DogRemote::ScreenShareWifiLock");
+                    }
+                    wifiLock.setReferenceCounted(false);
+                    wifiLock.acquire();
+                }
+                Log.d(TAG, "WakeLock and WifiLock acquired for low-latency Wi-Fi streaming");
+            } catch (Exception e) {
+                Log.w(TAG, "Could not acquire WakeLock/WifiLock", e);
+            }
+
             // Heartbeat thread keeps viewer updated even on static screens (2-3 FPS keepalive)
             heartbeatThread = new Thread(() -> {
                 while (isCapturing) {
@@ -395,6 +422,21 @@ public class ScreenShareService extends Service {
             captureThread = null;
             captureHandler = null;
         }
+
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+        } catch (Exception ignored) {}
+        wakeLock = null;
+
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) {
+                wifiLock.release();
+            }
+        } catch (Exception ignored) {}
+        wifiLock = null;
+
         Log.d(TAG, "Screen Capture stopped");
     }
 
