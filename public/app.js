@@ -94,7 +94,11 @@
 
     // Load saved settings
     const savedAddress = localStorage.getItem('dogremote_last_addr') || '';
-    if (savedAddress) remoteAddressInput.value = savedAddress;
+    if (savedAddress && !savedAddress.startsWith('26.')) {
+        remoteAddressInput.value = savedAddress;
+    } else {
+        remoteAddressInput.value = '192.168.8.185';
+    }
 
     const savedHostPwd = localStorage.getItem('dogremote_host_pwd') || '';
     if (savedHostPwd) hostPasswordInput.value = savedHostPwd;
@@ -115,7 +119,7 @@
             pc.onicecandidate = (event) => {
                 if (!event || !event.candidate || !event.candidate.candidate) return;
                 const match = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(event.candidate.candidate);
-                if (match && match[1] && !match[1].startsWith('127.') && match[1] !== '0.0.0.0') {
+                if (match && match[1] && !match[1].startsWith('127.') && match[1] !== '0.0.0.0' && !match[1].startsWith('26.')) {
                     myDetectedIp = match[1];
                     localIpText.textContent = `${myDetectedIp} (Wi-Fi)`;
                     try { pc.close(); } catch(e) {}
@@ -687,82 +691,152 @@
     });
 
     // Subnet Scanner with Deduplication and Dynamic Ping
+    // Native Android UDP Beacon Discovery Receiver
+    window.onPeerDiscovered = function(ip, name) {
+        if (!ip || ip === myDetectedIp || ip === '127.0.0.1' || ip === 'localhost' || ip.startsWith('26.')) return;
+        if (name && (name.includes('Mobile') || name.includes('Phone') || name.toLowerCase().includes('samsung'))) return;
+        addDiscoveredCard(ip, name || 'DogRemote Host', 'LAN UDP');
+        if (!remoteAddressInput.value || remoteAddressInput.value.startsWith('26.')) {
+            remoteAddressInput.value = ip;
+        }
+    };
+
+    let isScanningLocal = false;
+
+    // Subnet Scanner with Deduplication and Dynamic Ping
     function discoverLocalDevices() {
-        discoveredList.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-icon">
-                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></svg>
+        if (isScanningLocal) return;
+        isScanningLocal = true;
+        if (refreshDiscoveryBtn) refreshDiscoveryBtn.classList.add('rotating');
+
+        const existingCards = discoveredList.querySelectorAll('.device-card');
+        if (existingCards.length === 0) {
+            discoveredList.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">
+                        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></svg>
+                    </div>
+                    <div class="empty-title">Scanning Local Wi-Fi Subnet...</div>
+                    <div class="empty-desc">Probing active DogRemote hosts...</div>
                 </div>
-                <div class="empty-title">Scanning Local Wi-Fi Subnet...</div>
-                <div class="empty-desc">Probing active DogRemote hosts...</div>
-            </div>
-        `;
+            `;
+        }
 
-        discoveredIps.clear();
-
-        // Subnet candidates
-        const subnetBase = (myDetectedIp && myDetectedIp.includes('.')) 
+        const subnetBase = (myDetectedIp && myDetectedIp.includes('.') && !myDetectedIp.startsWith('26.')) 
             ? myDetectedIp.substring(0, myDetectedIp.lastIndexOf('.')) 
             : '192.168.8';
-        const candidates = [
-            '192.168.8.185',
-            '192.168.8.194',
-            '192.168.1.100',
-            '192.168.0.100'
-        ];
 
-        // Add nearby IP candidates from detected subnet
+        const lastSaved = localStorage.getItem('dogremote_last_addr') || '';
+        const inputVal = remoteAddressInput.value ? remoteAddressInput.value.trim() : '';
+
+        // 1. High-priority targeted probes (strictly limited to active candidate hosts)
+        const priorityTargets = [];
+        if (inputVal && !inputVal.startsWith('26.') && !priorityTargets.includes(inputVal)) priorityTargets.push(inputVal);
+        if (lastSaved && !lastSaved.startsWith('26.') && !priorityTargets.includes(lastSaved)) priorityTargets.push(lastSaved);
+        ['192.168.8.185', '192.168.8.194'].forEach(ip => {
+            if (!priorityTargets.includes(ip)) priorityTargets.push(ip);
+        });
+
+        // Probe priority targets first with dedicated sockets
+        priorityTargets.forEach(ip => {
+            probeHost(ip, 2500);
+        });
+
+        // 2. Focused nearby subnet offsets (low concurrency: 3 sockets max)
+        const subnetTargets = [];
         for (let i = 180; i <= 195; i++) {
             const ip = `${subnetBase}.${i}`;
-            if (!candidates.includes(ip) && ip !== myDetectedIp) {
-                candidates.push(ip);
+            if (!priorityTargets.includes(ip) && ip !== myDetectedIp) subnetTargets.push(ip);
+        }
+        for (let i = 1; i <= 15; i++) {
+            const ip = `${subnetBase}.${i}`;
+            if (!priorityTargets.includes(ip) && !subnetTargets.includes(ip) && ip !== myDetectedIp) subnetTargets.push(ip);
+        }
+
+        let checked = 0;
+        const totalToCheck = subnetTargets.length;
+        const BATCH_SIZE = 3;
+        let curIdx = 0;
+
+        function runNextBatch() {
+            if (curIdx >= subnetTargets.length) {
+                checkFinished();
+                return;
+            }
+            const batch = subnetTargets.slice(curIdx, curIdx + BATCH_SIZE);
+            curIdx += BATCH_SIZE;
+
+            batch.forEach(ip => {
+                probeHost(ip, 1200, () => {
+                    checked++;
+                    checkFinished();
+                });
+            });
+
+            if (curIdx < subnetTargets.length) {
+                setTimeout(runNextBatch, 500);
+            } else {
+                setTimeout(checkFinished, 1500);
             }
         }
 
-        let foundAny = false;
-        let checked = 0;
-
-        candidates.forEach(ip => {
-            // Strictly skip self and loopback
-            if (ip === myDetectedIp || ip === 'localhost' || ip === '127.0.0.1') {
-                checked++;
+        function probeHost(ip, timeoutMs, onDone) {
+            if (!ip || ip === myDetectedIp || ip === 'localhost' || ip === '127.0.0.1' || ip.startsWith('26.')) {
+                if (onDone) onDone();
                 return;
             }
 
             const probeStart = Date.now();
-            const probeWs = new WebSocket(`ws://${ip}:5859`);
-            
-            const probeTimeout = setTimeout(() => {
-                try { probeWs.close(); } catch(e) {}
-                checkDone();
-            }, 1000);
+            let probeWs = null;
+            let done = false;
 
-            probeWs.onopen = () => {
-                clearTimeout(probeTimeout);
-                foundAny = true;
-                const dynamicPing = Math.max(1, Date.now() - probeStart);
-                addDiscoveredCard(ip, 'DogRemote Host', `${dynamicPing} ms`);
-                try {
-                    probeWs.send(JSON.stringify({
-                        type: 'peer_announce',
-                        name: 'DogRemote Mobile (Phone)',
-                        ip: myDetectedIp || ''
-                    }));
-                } catch(e) {}
-                setTimeout(() => {
+            const finish = () => {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+                if (probeWs) {
                     try { probeWs.close(); } catch(e) {}
-                }, 150);
-                checkDone();
+                }
+                if (onDone) onDone();
             };
 
-            probeWs.onerror = () => {
-                clearTimeout(probeTimeout);
-                checkDone();
-            };
+            const timer = setTimeout(finish, timeoutMs);
 
-            function checkDone() {
-                checked++;
-                if (checked >= candidates.length && !foundAny) {
+            try {
+                probeWs = new WebSocket(`ws://${ip}:5859`);
+                probeWs.onopen = () => {
+                    const dynamicPing = Math.max(1, Date.now() - probeStart);
+                    addDiscoveredCard(ip, 'DogRemote Host', `${dynamicPing} ms`);
+                    try {
+                        probeWs.send(JSON.stringify({
+                            type: 'peer_announce',
+                            name: window.myDeviceName || 'Samsung Mobile',
+                            ip: myDetectedIp || ''
+                        }));
+                    } catch(e) {}
+                    setTimeout(finish, 400);
+                };
+                probeWs.onmessage = (e) => {
+                    try {
+                        const msg = JSON.parse(e.data);
+                        const hostName = msg.name || msg.host || msg.device_name;
+                        if (hostName && !hostName.includes('Mobile') && !hostName.includes('Phone')) {
+                            const dynamicPing = Math.max(1, Date.now() - probeStart);
+                            addDiscoveredCard(ip, hostName, `${dynamicPing} ms`);
+                        }
+                    } catch(err) {}
+                };
+                probeWs.onerror = finish;
+            } catch(e) {
+                finish();
+            }
+        }
+
+        function checkFinished() {
+            if (checked >= totalToCheck || curIdx >= subnetTargets.length) {
+                isScanningLocal = false;
+                if (refreshDiscoveryBtn) refreshDiscoveryBtn.classList.remove('rotating');
+                if (discoveredList.querySelectorAll('.device-card').length === 0 && discoveredIps.size === 0) {
                     discoveredList.innerHTML = `
                         <div class="empty-state">
                             <div class="empty-icon">
@@ -774,27 +848,47 @@
                     `;
                 }
             }
-        });
+        }
+
+        // Slight delay before running background subnet sweep so priority hosts respond instantly
+        setTimeout(runNextBatch, 300);
     }
 
     // Add Discovered Host Card (Strictly one card per unique IP)
     function addDiscoveredCard(ip, name, pingStr) {
-        if (discoveredIps.has(ip)) return;
+        if (!ip || ip === myDetectedIp || ip === '127.0.0.1' || ip === 'localhost' || ip.startsWith('26.')) return;
+        if (name && (name.includes('Mobile') || name.includes('Phone') || name.toLowerCase().includes('samsung'))) return;
+
         discoveredIps.add(ip);
 
-        if (discoveredList.querySelector('.empty-state')) {
-            discoveredList.innerHTML = '';
+        // Check if card for this IP already exists in DOM
+        const existingCard = discoveredList.querySelector(`[data-ip="${ip}"]`);
+        if (existingCard) {
+            const pingVal = existingCard.querySelector('.device-ping-val');
+            if (pingVal && pingStr) pingVal.textContent = pingStr;
+            const nameSpan = existingCard.querySelector('.device-name-text');
+            if (nameSpan && name && name !== 'DogRemote Host' && !name.startsWith('Host-')) {
+                nameSpan.textContent = name;
+            }
+            return;
+        }
+
+        // Remove empty state if present
+        const emptyState = discoveredList.querySelector('.empty-state');
+        if (emptyState) {
+            emptyState.remove();
         }
 
         const card = document.createElement('div');
         card.className = 'device-card';
+        card.setAttribute('data-ip', ip);
         card.innerHTML = `
             <div class="device-info-left">
                 <div class="device-name">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block; vertical-align:middle; margin-right:4px;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
-                    <span>${name}</span>
+                    <span class="device-name-text">${name || 'DogRemote Host'}</span>
                 </div>
-                <div class="device-ip">${ip}:5859 • <span style="color:#34d399; font-weight:700;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" style="display:inline-block; vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> ${pingStr}</span></div>
+                <div class="device-ip">${ip}:5859 • <span style="color:#34d399; font-weight:700;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" style="display:inline-block; vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> <span class="device-ping-val">${pingStr}</span></span></div>
             </div>
             <button type="button" class="btn-secondary btn-xs connect-quick-btn">
                 <span>Connect</span>
@@ -823,7 +917,7 @@
                     try {
                         wsAnnounce.send(JSON.stringify({
                             type: 'peer_announce',
-                            name: 'DogRemote Mobile (Phone)',
+                            name: window.myDeviceName || 'Samsung Mobile',
                             ip: myDetectedIp || ''
                         }));
                     } catch(e) {}
@@ -842,3 +936,4 @@
     discoverLocalDevices();
 
 })();
+

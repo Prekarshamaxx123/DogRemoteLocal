@@ -376,10 +376,26 @@ class LanCastServer:
             async def ws_handler(websocket):
                 await self._handle_ws_client(websocket)
 
+            def proc_req(conn, req):
+                # Respond to HTTP GET probes for auto-discovery
+                if req.path == "/info" or req.headers.get("Upgrade", "").lower() != "websocket":
+                    import http
+                    body = json.dumps({
+                        "service": "lancast",
+                        "name": socket.gethostname(),
+                        "host": socket.gethostname(),
+                        "port": self.ws_port
+                    })
+                    res = conn.respond(http.HTTPStatus.OK, body)
+                    res.headers["Content-Type"] = "application/json"
+                    res.headers["Access-Control-Allow-Origin"] = "*"
+                    return res
+                return None
+
             async def main_ws():
                 self.ws_loop = asyncio.get_running_loop()
                 try:
-                    async with websockets.serve(ws_handler, self.host, self.ws_port):
+                    async with websockets.serve(ws_handler, self.host, self.ws_port, process_request=proc_req):
                         print(f"[DogRemote] Mobile WebSocket server listening on port {self.ws_port}")
                         await asyncio.Future()
                 except Exception as e:
@@ -395,12 +411,6 @@ class LanCastServer:
     async def _handle_ws_client(self, websocket):
         client_name = "Mobile Device"
         client_ip = websocket.remote_address[0] if websocket.remote_address else ""
-        if client_ip and not client_ip.startswith("127."):
-            if self.on_peer_detected:
-                try:
-                    self.on_peer_detected(client_ip, f"Mobile Device ({client_ip})", 5859)
-                except Exception:
-                    pass
 
         try:
             raw = await websocket.recv()
@@ -416,7 +426,11 @@ class LanCastServer:
                         pass
 
                 if mtype == "peer_announce":
-                    await websocket.send(json.dumps({"type": "announce_ack"}))
+                    await websocket.send(json.dumps({
+                        "type": "announce_ack",
+                        "name": socket.gethostname(),
+                        "host": socket.gethostname()
+                    }))
                     return
 
                 req_pwd = str(data.get("password", "")).strip()

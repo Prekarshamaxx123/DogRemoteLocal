@@ -1535,6 +1535,11 @@ class LanCastMainWindow(QMainWindow):
         for i in range(self.discovered_layout.count()):
             w = self.discovered_layout.itemAt(i).widget()
             if w and w.objectName() == target_id:
+                # Update label of existing card if name or port changed
+                info_lbl = w.findChild(QLabel, "lbl_dev_info")
+                if info_lbl and dev.get("name"):
+                    info_lbl.setText(f"<span style='font-size: 13px; font-weight: bold; color: #ffffff;'>{dev['name']}</span>"
+                                     f"<br><span style='color: #94a3b8; font-size: 11px; font-family: monospace;'>IP: {dev['ip']}:{dev.get('port', 5858)}</span>")
                 return
 
         item = QFrame()
@@ -1556,6 +1561,7 @@ class LanCastMainWindow(QMainWindow):
 
         info = QLabel(f"<span style='font-size: 13px; font-weight: bold; color: #ffffff;'>{dev['name']}</span>"
                       f"<br><span style='color: #94a3b8; font-size: 11px; font-family: monospace;'>IP: {dev['ip']}:{dev.get('port', 5858)}</span>")
+        info.setObjectName("lbl_dev_info")
         info.setStyleSheet("background: transparent; border: none;")
         info.setWordWrap(True)
         h.addWidget(info, stretch=1)
@@ -1598,7 +1604,15 @@ class LanCastMainWindow(QMainWindow):
         self.btn_rescan.setText("Refresh Scan")
         self.btn_rescan.setEnabled(True)
         devices = self.discovery.get_devices() if self.discovery else []
-        if not devices:
+        
+        # Check if there are already device cards displayed in layout
+        card_count = 0
+        for i in range(self.discovered_layout.count()):
+            w = self.discovered_layout.itemAt(i).widget()
+            if w and w != self.empty_state_frame and w.objectName().startswith("dev_"):
+                card_count += 1
+
+        if card_count == 0 and not devices:
             self.lbl_empty_devices.setText("Scan completed. No other DogRemote hosts detected on this subnet.")
             self.empty_state_frame.setVisible(True)
         else:

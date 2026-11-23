@@ -53,10 +53,34 @@ class LanDiscovery:
 
         while self.running:
             try:
+                # 1. Limited broadcast
                 sock.sendto(payload, ('255.255.255.255', UDP_DISCOVERY_PORT))
+
+                # 2. Directed subnet broadcast (e.g. 192.168.8.255)
+                if self.local_ip and '.' in self.local_ip:
+                    prefix = self.local_ip.rsplit('.', 1)[0]
+                    try:
+                        sock.sendto(payload, (f"{prefix}.255", UDP_DISCOVERY_PORT))
+                    except Exception:
+                        pass
+
+                # 3. Unicast directly to known ARP neighbors (guaranteed to bypass Wi-Fi broadcast drops)
+                try:
+                    with open("/proc/net/arp", "r") as f:
+                        for line in f.readlines()[1:]:
+                            parts = line.split()
+                            if len(parts) >= 4 and parts[2] != "0x0" and parts[3] != "00:00:00:00:00:00":
+                                a_ip = parts[0]
+                                if a_ip != self.local_ip and not a_ip.endswith(".1"):
+                                    try:
+                                        sock.sendto(payload, (a_ip, UDP_DISCOVERY_PORT))
+                                    except Exception:
+                                        pass
+                except Exception:
+                    pass
             except Exception:
                 pass
-            time.sleep(3.0)
+            time.sleep(2.5)
 
         sock.close()
 
@@ -156,11 +180,42 @@ class LanDiscovery:
     def _probe_peer(self, ip: str, port: int):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.35)  # reliable check over Wi-Fi (350ms)
+            s.settimeout(0.75)  # 750ms for reliable Wi-Fi responses
             res = s.connect_ex((ip, port))
-            s.close()
             if res == 0:
-                self._register_device(ip=ip, name=f"Host-{ip}", port=port)
+                name = None
+                s.settimeout(0.4)
+                # 1. Check if peer immediately sends a banner (e.g. Android TCP responder)
+                try:
+                    data = s.recv(512)
+                    if data:
+                        info = json.loads(data.decode('utf-8').strip())
+                        if "name" in info:
+                            name = info["name"]
+                except Exception:
+                    pass
+
+                # 2. If no immediate banner, send HTTP GET /info
+                if not name:
+                    try:
+                        req = f"GET /info HTTP/1.1\r\nHost: {ip}:{port}\r\nConnection: close\r\n\r\n"
+                        s.sendall(req.encode('utf-8'))
+                        s.settimeout(0.4)
+                        resp = s.recv(1024).decode('utf-8', errors='ignore')
+                        if "{" in resp:
+                            body = resp[resp.find("{"):resp.rfind("}") + 1]
+                            info = json.loads(body)
+                            if "name" in info:
+                                name = info["name"]
+                    except Exception:
+                        pass
+
+                s.close()
+                if not name:
+                    name = f"DogRemote Host ({ip})"
+                self._register_device(ip=ip, name=name, port=port)
+            else:
+                s.close()
         except Exception:
             pass
 
@@ -178,7 +233,11 @@ class LanDiscovery:
         with self._lock:
             if dev_id in self.discovered_devices:
                 self.discovered_devices[dev_id]["last_seen"] = time.time()
-                self.discovered_devices[dev_id]["name"] = name
+                # Update name if a better descriptive name was found
+                old_name = self.discovered_devices[dev_id].get("name", "")
+                if name and (name != old_name and not name.startswith("Host-")):
+                    self.discovered_devices[dev_id]["name"] = name
+                    dev["name"] = name
             else:
                 self.discovered_devices[dev_id] = dev
                 is_new = True
@@ -187,12 +246,12 @@ class LanDiscovery:
             self.on_device_found(dev, is_new)
 
     def _clean_loop(self):
-        """Prunes dead devices after 180 seconds of silence."""
+        """Prunes dead devices after 300 seconds of silence."""
         while self.running:
-            time.sleep(10.0)
+            time.sleep(15.0)
             now = time.time()
             with self._lock:
-                expired = [k for k, v in self.discovered_devices.items() if now - v["last_seen"] > 180.0]
+                expired = [k for k, v in self.discovered_devices.items() if now - v["last_seen"] > 300.0]
                 for k in expired:
                     del self.discovered_devices[k]
 
