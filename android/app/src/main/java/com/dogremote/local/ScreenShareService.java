@@ -1,5 +1,6 @@
 package com.dogremote.local;
 
+import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -24,6 +25,7 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.ByteBuffer;
@@ -47,7 +49,9 @@ public class ScreenShareService extends Service {
     private ImageReader imageReader;
     private HandlerThread captureThread;
     private Handler captureHandler;
+    private Thread heartbeatThread = null;
     private volatile boolean isCapturing = false;
+    private volatile byte[] lastFrameBytes = null;
     private long lastFrameTime = 0;
 
     public static ScreenShareService getInstance() {
@@ -56,8 +60,82 @@ public class ScreenShareService extends Service {
 
     public static void addStreamingClient(Socket socket) {
         if (instance != null) {
+            try {
+                socket.setTcpNoDelay(true);
+                socket.setSoTimeout(0);
+            } catch (Exception ignored) {}
             instance.clientSockets.add(socket);
             Log.d(TAG, "Added streaming client: " + socket.getRemoteSocketAddress() + " (total: " + instance.clientSockets.size() + ")");
+
+            // Send initial frame immediately if already captured so viewer never starts with black screen
+            byte[] initialFrame = instance.lastFrameBytes;
+            if (initialFrame != null) {
+                try {
+                    ByteBuffer bb = ByteBuffer.allocate(1 + 4 + 8 + initialFrame.length);
+                    bb.order(ByteOrder.BIG_ENDIAN);
+                    bb.put((byte) 1); // TYPE_FRAME
+                    bb.putInt(8 + initialFrame.length);
+                    bb.putDouble((double) System.currentTimeMillis() / 1000.0);
+                    bb.put(initialFrame);
+                    byte[] packet = bb.array();
+                    synchronized (socket) {
+                        OutputStream os = socket.getOutputStream();
+                        os.write(packet);
+                        os.flush();
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            // Start client listener thread to handle pings and monitor connection lifecycle
+            new Thread(() -> {
+                try {
+                    InputStream in = socket.getInputStream();
+                    OutputStream out = socket.getOutputStream();
+                    byte[] hdr = new byte[5];
+                    while (instance != null && !socket.isClosed()) {
+                        int r = in.read(hdr);
+                        if (r <= 0) break;
+                        while (r < 5) {
+                            int more = in.read(hdr, r, 5 - r);
+                            if (more <= 0) break;
+                            r += more;
+                        }
+                        if (r < 5) break;
+
+                        int type = hdr[0] & 0xFF;
+                        int len = ((hdr[1] & 0xFF) << 24) | ((hdr[2] & 0xFF) << 16) | ((hdr[3] & 0xFF) << 8) | (hdr[4] & 0xFF);
+                        byte[] body = new byte[len];
+                        int total = 0;
+                        while (total < len) {
+                            int n = in.read(body, total, len - total);
+                            if (n <= 0) break;
+                            total += n;
+                        }
+                        if (total < len) break;
+
+                        // Respond to PING (type 7) with PONG (type 8)
+                        if (type == 7) {
+                            ByteBuffer pong = ByteBuffer.allocate(1 + 4 + len);
+                            pong.put((byte) 8); // TYPE_PONG
+                            pong.putInt(len);
+                            pong.put(body);
+                            synchronized (socket) {
+                                out.write(pong.array());
+                                out.flush();
+                            }
+                        } else if (type == 9) { // TYPE_DISCONNECT
+                            break;
+                        }
+                    }
+                } catch (Exception ignored) {}
+                finally {
+                    if (instance != null) {
+                        instance.clientSockets.remove(socket);
+                    }
+                    try { socket.close(); } catch (Exception ignored) {}
+                    Log.d(TAG, "Streaming client disconnected: " + socket.getRemoteSocketAddress());
+                }
+            }).start();
         }
     }
 
@@ -107,21 +185,36 @@ public class ScreenShareService extends Service {
                 startForeground(NOTIFICATION_ID, notification);
             }
 
-            int resultCode = intent.getIntExtra("resultCode", -1);
-            Intent data = intent.getParcelableExtra("data");
-            if (resultCode != -1 && data != null) {
+            int resultCode = intent.getIntExtra("resultCode", Activity.RESULT_CANCELED);
+            Intent data;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                data = intent.getParcelableExtra("data", Intent.class);
+            } else {
+                data = intent.getParcelableExtra("data");
+            }
+
+            if (resultCode == Activity.RESULT_OK && data != null) {
                 startScreenCapture(resultCode, data);
+            } else {
+                Log.e(TAG, "Cannot start capture: resultCode=" + resultCode + " (RESULT_OK=" + Activity.RESULT_OK + "), data=" + data);
             }
         }
         return START_NOT_STICKY;
     }
 
     private void startScreenCapture(int resultCode, Intent data) {
+        stopScreenCapture();
         try {
             MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-            if (mpm == null) return;
+            if (mpm == null) {
+                Log.e(TAG, "MediaProjectionManager is null");
+                return;
+            }
             mediaProjection = mpm.getMediaProjection(resultCode, data);
-            if (mediaProjection == null) return;
+            if (mediaProjection == null) {
+                Log.e(TAG, "getMediaProjection returned null");
+                return;
+            }
 
             DisplayMetrics dm = getResources().getDisplayMetrics();
             int screenWidth = dm.widthPixels;
@@ -140,6 +233,15 @@ public class ScreenShareService extends Service {
             captureThread.start();
             captureHandler = new Handler(captureThread.getLooper());
 
+            mediaProjection.registerCallback(new MediaProjection.Callback() {
+                @Override
+                public void onStop() {
+                    super.onStop();
+                    Log.d(TAG, "MediaProjection stopped by system");
+                    stopScreenCapture();
+                }
+            }, captureHandler);
+
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2);
             virtualDisplay = mediaProjection.createVirtualDisplay(
                 "DogRemoteDisplay",
@@ -150,8 +252,33 @@ public class ScreenShareService extends Service {
 
             isCapturing = true;
 
+            // Heartbeat thread keeps viewer updated even on static screens (2-3 FPS keepalive)
+            heartbeatThread = new Thread(() -> {
+                while (isCapturing) {
+                    try {
+                        Thread.sleep(300);
+                        if (!clientSockets.isEmpty() && lastFrameBytes != null) {
+                            long now = System.currentTimeMillis();
+                            if (now - lastFrameTime >= 350) {
+                                broadcastFrame(lastFrameBytes);
+                            }
+                        }
+                    } catch (InterruptedException ignored) {
+                        break;
+                    } catch (Exception ignored) {}
+                }
+            }, "DogRemote-Heartbeat");
+            heartbeatThread.start();
+
             imageReader.setOnImageAvailableListener(reader -> {
-                if (!isCapturing || clientSockets.isEmpty()) {
+                if (!isCapturing) {
+                    Image img = reader.acquireLatestImage();
+                    if (img != null) img.close();
+                    return;
+                }
+
+                // If no clients are connected and we already have a cached frame, skip to save CPU
+                if (clientSockets.isEmpty() && lastFrameBytes != null) {
                     Image img = reader.acquireLatestImage();
                     if (img != null) img.close();
                     return;
@@ -159,7 +286,7 @@ public class ScreenShareService extends Service {
 
                 long now = System.currentTimeMillis();
                 // Throttle to max 45-60 FPS (min 16ms between frames)
-                if (now - lastFrameTime < 16) {
+                if (clientSockets.size() > 0 && now - lastFrameTime < 16) {
                     Image img = reader.acquireLatestImage();
                     if (img != null) img.close();
                     return;
@@ -191,10 +318,11 @@ public class ScreenShareService extends Service {
                     }
 
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 68, baos);
+                    cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 70, baos);
                     cleanBitmap.recycle();
                     byte[] jpegBytes = baos.toByteArray();
 
+                    lastFrameBytes = jpegBytes;
                     broadcastFrame(jpegBytes);
                 } catch (Exception e) {
                     Log.v(TAG, "Capture frame error: " + e.getMessage());
@@ -229,9 +357,11 @@ public class ScreenShareService extends Service {
                     clientSockets.remove(s);
                     continue;
                 }
-                OutputStream os = s.getOutputStream();
-                os.write(packet);
-                os.flush();
+                synchronized (s) {
+                    OutputStream os = s.getOutputStream();
+                    os.write(packet);
+                    os.flush();
+                }
             } catch (Exception e) {
                 try { s.close(); } catch (Exception ignored) {}
                 clientSockets.remove(s);
@@ -242,22 +372,28 @@ public class ScreenShareService extends Service {
     private void stopScreenCapture() {
         isCapturing = false;
         clientSockets.clear();
+        if (heartbeatThread != null) {
+            heartbeatThread.interrupt();
+            heartbeatThread = null;
+        }
+        lastFrameBytes = null;
 
         if (virtualDisplay != null) {
-            virtualDisplay.release();
+            try { virtualDisplay.release(); } catch (Exception ignored) {}
             virtualDisplay = null;
         }
         if (imageReader != null) {
-            imageReader.close();
+            try { imageReader.close(); } catch (Exception ignored) {}
             imageReader = null;
         }
         if (mediaProjection != null) {
-            mediaProjection.stop();
+            try { mediaProjection.stop(); } catch (Exception ignored) {}
             mediaProjection = null;
         }
         if (captureThread != null) {
-            captureThread.quitSafely();
+            try { captureThread.quitSafely(); } catch (Exception ignored) {}
             captureThread = null;
+            captureHandler = null;
         }
         Log.d(TAG, "Screen Capture stopped");
     }

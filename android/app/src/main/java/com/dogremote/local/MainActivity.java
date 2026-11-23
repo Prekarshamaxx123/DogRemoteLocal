@@ -331,7 +331,23 @@ public class MainActivity extends BridgeActivity {
                                 client.getOutputStream().flush();
                                 client.close();
                             } else if (head[0] == 2) { // TYPE_CONNECT_REQ (LanCast streaming client connecting to phone!)
-                                if (isSharingScreen) {
+                                while (r < 5) {
+                                    int m = is.read(head, r, 5 - r);
+                                    if (m <= 0) break;
+                                    r += m;
+                                }
+                                int reqLen = ((head[1] & 0xFF) << 24) | ((head[2] & 0xFF) << 16) | ((head[3] & 0xFF) << 8) | (head[4] & 0xFF);
+                                if (reqLen > 0 && reqLen < 65536) {
+                                    byte[] reqPayload = new byte[reqLen];
+                                    int readTotal = 0;
+                                    while (readTotal < reqLen) {
+                                        int count = is.read(reqPayload, readTotal, reqLen - readTotal);
+                                        if (count < 0) break;
+                                        readTotal += count;
+                                    }
+                                }
+
+                                if (isSharingScreen && ScreenShareService.getInstance() != null) {
                                     // Accept connection and start streaming phone frames to PC
                                     JSONObject resJson = new JSONObject();
                                     resJson.put("accepted", true);

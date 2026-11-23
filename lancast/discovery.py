@@ -193,50 +193,39 @@ class LanDiscovery:
     def _probe_peer(self, ip: str, port: int):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.75)  # 750ms for reliable Wi-Fi responses
-            res = s.connect_ex((ip, port))
-            if res == 0:
-                name = None
-                is_sharing = False
-                s.settimeout(0.4)
-                # 1. Check if peer immediately sends a banner (e.g. Android TCP responder)
-                try:
-                    data = s.recv(512)
-                    if data:
-                        info = json.loads(data.decode('utf-8').strip())
-                        if "name" in info:
-                            name = info["name"]
-                        if "sharing" in info:
-                            is_sharing = bool(info["sharing"])
-                except Exception:
-                    pass
-
-                # 2. If no immediate banner, send HTTP GET /info
-                if not name or not is_sharing:
-                    try:
-                        req = f"GET /info HTTP/1.1\r\nHost: {ip}:{port}\r\nConnection: close\r\n\r\n"
-                        s.sendall(req.encode('utf-8'))
-                        s.settimeout(0.4)
-                        resp = s.recv(1024).decode('utf-8', errors='ignore')
-                        if "{" in resp:
-                            body = resp[resp.find("{"):resp.rfind("}") + 1]
-                            info = json.loads(body)
-                            if "name" in info:
-                                name = info["name"]
-                            if "sharing" in info:
-                                is_sharing = bool(info["sharing"])
-                    except Exception:
-                        pass
-
+            s.settimeout(1.0)  # 1.0s timeout for reliable Wi-Fi responses
+            try:
+                s.connect((ip, port))
+            except Exception:
                 s.close()
-                if is_sharing:
-                    if not name:
-                        name = f"DogRemote Host ({ip})"
-                    self._register_device(ip=ip, name=name, port=port)
-                else:
-                    self._remove_device(ip)
+                return
+
+            name = None
+            is_sharing = False
+
+            # Send HTTP GET /info for instant host identity and status
+            try:
+                req = f"GET /info HTTP/1.1\r\nHost: {ip}:{port}\r\nConnection: close\r\n\r\n"
+                s.sendall(req.encode('utf-8'))
+                s.settimeout(0.8)
+                resp = s.recv(1024).decode('utf-8', errors='ignore')
+                if "{" in resp:
+                    body = resp[resp.find("{"):resp.rfind("}") + 1]
+                    info = json.loads(body)
+                    if "name" in info:
+                        name = info["name"]
+                    if "sharing" in info:
+                        is_sharing = bool(info["sharing"])
+            except Exception:
+                pass
+
+            s.close()
+            if is_sharing:
+                if not name:
+                    name = f"DogRemote Host ({ip})"
+                self._register_device(ip=ip, name=name, port=port)
             else:
-                s.close()
+                self._remove_device(ip)
         except Exception:
             pass
 
