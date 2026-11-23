@@ -316,78 +316,7 @@ public class MainActivity extends BridgeActivity {
                 while (isRunning) {
                     try {
                         Socket client = tcpDiscoveryServer.accept();
-                        client.setSoTimeout(3000);
-                        InputStream is = client.getInputStream();
-                        byte[] head = new byte[5];
-                        int r = is.read(head);
-
-                        if (r > 0) {
-                            // Check if HTTP GET probe (e.g. "GET /info")
-                            if (head[0] == 'G' && head[1] == 'E' && head[2] == 'T') {
-                                String localIp = getLocalIpAddress();
-                                String body = "{\"service\":\"lancast\",\"name\":\"" + deviceName + "\",\"ip\":\"" + (localIp != null ? localIp : "") + "\",\"port\":5859,\"sharing\":" + isSharingScreen + "}";
-                                String resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + body.length() + "\r\nConnection: close\r\n\r\n" + body;
-                                client.getOutputStream().write(resp.getBytes("UTF-8"));
-                                client.getOutputStream().flush();
-                                client.close();
-                            } else if (head[0] == 2) { // TYPE_CONNECT_REQ (LanCast streaming client connecting to phone!)
-                                while (r < 5) {
-                                    int m = is.read(head, r, 5 - r);
-                                    if (m <= 0) break;
-                                    r += m;
-                                }
-                                int reqLen = ((head[1] & 0xFF) << 24) | ((head[2] & 0xFF) << 16) | ((head[3] & 0xFF) << 8) | (head[4] & 0xFF);
-                                if (reqLen > 0 && reqLen < 65536) {
-                                    byte[] reqPayload = new byte[reqLen];
-                                    int readTotal = 0;
-                                    while (readTotal < reqLen) {
-                                        int count = is.read(reqPayload, readTotal, reqLen - readTotal);
-                                        if (count < 0) break;
-                                        readTotal += count;
-                                    }
-                                }
-
-                                if (isSharingScreen && ScreenShareService.getInstance() != null) {
-                                    // Accept connection and start streaming phone frames to PC
-                                    JSONObject resJson = new JSONObject();
-                                    resJson.put("accepted", true);
-                                    JSONObject perms = new JSONObject();
-                                    perms.put("screen", true);
-                                    perms.put("control", false);
-                                    perms.put("audio", false);
-                                    resJson.put("permissions", perms);
-                                    byte[] payload = resJson.toString().getBytes("UTF-8");
-
-                                    ByteBuffer bb = ByteBuffer.allocate(1 + 4 + payload.length);
-                                    bb.put((byte) 3); // TYPE_CONNECT_RES
-                                    bb.putInt(payload.length);
-                                    bb.put(payload);
-                                    client.getOutputStream().write(bb.array());
-                                    client.getOutputStream().flush();
-
-                                    // Add to streaming clients
-                                    ScreenShareService.addStreamingClient(client);
-                                    continue; // Do NOT close client socket!
-                                } else {
-                                    // Reject: screen sharing is not active
-                                    JSONObject resJson = new JSONObject();
-                                    resJson.put("accepted", false);
-                                    resJson.put("reason", "Phone screen sharing is not active");
-                                    byte[] payload = resJson.toString().getBytes("UTF-8");
-                                    ByteBuffer bb = ByteBuffer.allocate(1 + 4 + payload.length);
-                                    bb.put((byte) 3);
-                                    bb.putInt(payload.length);
-                                    bb.put(payload);
-                                    client.getOutputStream().write(bb.array());
-                                    client.getOutputStream().flush();
-                                    client.close();
-                                }
-                            } else {
-                                client.close();
-                            }
-                        } else {
-                            client.close();
-                        }
+                        new Thread(() -> handleIncomingTcpClient(client, deviceName), "DogRemote-ClientHandler").start();
                     } catch (Exception ignored) {}
                 }
             } catch (Exception e) {
@@ -447,6 +376,109 @@ public class MainActivity extends BridgeActivity {
                 }
             }
         }, "DogRemote-UiSync").start();
+    }
+
+    private void handleIncomingTcpClient(Socket client, String deviceName) {
+        try {
+            client.setSoTimeout(5000);
+            client.setTcpNoDelay(true);
+            InputStream is = client.getInputStream();
+            byte[] head = new byte[5];
+            int r = 0;
+            while (r < 5) {
+                int m = is.read(head, r, 5 - r);
+                if (m <= 0) break;
+                r += m;
+            }
+
+            if (r > 0) {
+                // Check if HTTP GET probe (e.g. "GET /info")
+                if (head[0] == 'G' && head[1] == 'E' && head[2] == 'T') {
+                    String localIp = getLocalIpAddress();
+                    String body = "{\"service\":\"lancast\",\"name\":\"" + deviceName + "\",\"ip\":\"" + (localIp != null ? localIp : "") + "\",\"port\":5859,\"sharing\":" + isSharingScreen + "}";
+                    String resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + body.length() + "\r\nConnection: close\r\n\r\n" + body;
+                    client.getOutputStream().write(resp.getBytes("UTF-8"));
+                    client.getOutputStream().flush();
+                    client.close();
+                } else if (head[0] == 2) { // TYPE_CONNECT_REQ
+                    int reqLen = ((head[1] & 0xFF) << 24) | ((head[2] & 0xFF) << 16) | ((head[3] & 0xFF) << 8) | (head[4] & 0xFF);
+                    if (reqLen > 0 && reqLen < 65536) {
+                        byte[] reqPayload = new byte[reqLen];
+                        int readTotal = 0;
+                        while (readTotal < reqLen) {
+                            int count = is.read(reqPayload, readTotal, reqLen - readTotal);
+                            if (count < 0) break;
+                            readTotal += count;
+                        }
+                    }
+
+                    if (!isSharingScreen) {
+                        // Remote PC wants to view phone screen! Prompt user on phone screen immediately.
+                        Log.d(TAG, "Incoming screen view request from PC! Prompting user to allow screen capture...");
+                        runOnUiThread(() -> {
+                            try {
+                                Intent bringToFront = new Intent(MainActivity.this, MainActivity.class);
+                                bringToFront.setFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                                startActivity(bringToFront);
+                            } catch (Exception ignored) {}
+                            requestScreenCapture();
+                        });
+
+                        // Wait up to 15 seconds for user to confirm the permission dialog on phone
+                        long startWait = System.currentTimeMillis();
+                        while (!isSharingScreen && (System.currentTimeMillis() - startWait < 15000) && isRunning && !client.isClosed()) {
+                            try {
+                                Thread.sleep(200);
+                            } catch (InterruptedException e) {
+                                break;
+                            }
+                        }
+                    }
+
+                    if (isSharingScreen && ScreenShareService.getInstance() != null) {
+                        // Accept connection and start streaming phone frames to PC
+                        JSONObject resJson = new JSONObject();
+                        resJson.put("accepted", true);
+                        JSONObject perms = new JSONObject();
+                        perms.put("screen", true);
+                        perms.put("control", false);
+                        perms.put("audio", false);
+                        resJson.put("permissions", perms);
+                        byte[] payload = resJson.toString().getBytes("UTF-8");
+
+                        ByteBuffer bb = ByteBuffer.allocate(1 + 4 + payload.length);
+                        bb.put((byte) 3); // TYPE_CONNECT_RES
+                        bb.putInt(payload.length);
+                        bb.put(payload);
+                        client.getOutputStream().write(bb.array());
+                        client.getOutputStream().flush();
+
+                        // Add to streaming clients and do NOT close client socket!
+                        ScreenShareService.addStreamingClient(client);
+                        return;
+                    } else {
+                        // Rejected or user did not start screen sharing
+                        JSONObject resJson = new JSONObject();
+                        resJson.put("accepted", false);
+                        resJson.put("reason", "Phone screen sharing was not started. Please tap Start on the phone dialog.");
+                        byte[] payload = resJson.toString().getBytes("UTF-8");
+                        ByteBuffer bb = ByteBuffer.allocate(1 + 4 + payload.length);
+                        bb.put((byte) 3); // TYPE_CONNECT_RES
+                        bb.putInt(payload.length);
+                        bb.put(payload);
+                        client.getOutputStream().write(bb.array());
+                        client.getOutputStream().flush();
+                        client.close();
+                    }
+                } else {
+                    client.close();
+                }
+            } else {
+                client.close();
+            }
+        } catch (Exception e) {
+            try { client.close(); } catch (Exception ignored) {}
+        }
     }
 
     private void probeTarget(String ip, int port) {
