@@ -1224,7 +1224,7 @@ class LanCastMainWindow(QMainWindow):
 
         btn_show_cli_pwd = QPushButton("Show")
         btn_show_cli_pwd.setProperty("class", "btn-secondary")
-        btn_show_cli_pwd.clicked.connect(lambda: (
+        btn_show_cli_pwd.clicked.connect(lambda checked=False: (
             self.txt_client_pwd.setEchoMode(QLineEdit.EchoMode.Normal if self.txt_client_pwd.echoMode() == QLineEdit.EchoMode.Password else QLineEdit.EchoMode.Password),
             btn_show_cli_pwd.setText("Hide" if self.txt_client_pwd.echoMode() == QLineEdit.EchoMode.Normal else "Show")
         ))
@@ -1543,13 +1543,13 @@ class LanCastMainWindow(QMainWindow):
         btn_decline = QPushButton("Decline")
         btn_decline.setProperty("class", "btn-secondary")
         btn_decline.setStyleSheet("background-color: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; padding: 10px 18px;")
-        btn_decline.clicked.connect(lambda: (session.reject_connection("Connection declined by host"), dlg.reject()))
+        btn_decline.clicked.connect(lambda checked=False: (session.reject_connection("Connection declined by host"), dlg.reject()))
         btn_box.addWidget(btn_decline)
 
         btn_accept = QPushButton("Accept Session")
         btn_accept.setProperty("class", "btn-cta")
         btn_accept.setStyleSheet("padding: 10px 18px;")
-        btn_accept.clicked.connect(lambda: (
+        btn_accept.clicked.connect(lambda checked=False: (
             session.accept_connection(allow_control=chk_ctrl.isChecked()),
             self.start_sharing() if not self.is_sharing else None,
             dlg.accept()
@@ -1634,7 +1634,9 @@ class LanCastMainWindow(QMainWindow):
             }
         """)
         btn_c.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_c.clicked.connect(lambda: self.prefill_and_connect(dev['ip'], dev.get('port', 5858)))
+        target_ip = dev['ip']
+        target_port = dev.get('port', 5858)
+        btn_c.clicked.connect(lambda checked=False, ip=target_ip, port=target_port: self.prefill_and_connect(ip, port))
         h.addWidget(btn_c)
 
         self.discovered_layout.insertWidget(self.discovered_layout.count() - 1, item)
@@ -1761,7 +1763,7 @@ class LanCastMainWindow(QMainWindow):
 
             btn_eye = QPushButton("Show")
             btn_eye.setProperty("class", "btn-secondary")
-            btn_eye.clicked.connect(lambda: (
+            btn_eye.clicked.connect(lambda checked=False: (
                 txt_p.setEchoMode(QLineEdit.EchoMode.Normal if txt_p.echoMode() == QLineEdit.EchoMode.Password else QLineEdit.EchoMode.Password),
                 btn_eye.setText("Hide" if txt_p.echoMode() == QLineEdit.EchoMode.Normal else "Show")
             ))
