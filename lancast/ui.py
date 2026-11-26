@@ -593,7 +593,7 @@ class ScreenViewerWindow(QMainWindow):
 
         self.setCentralWidget(container)
 
-    def toggle_bar_collapse(self):
+    def toggle_bar_collapse(self, *args):
         self.toolbar_collapsed = not self.toolbar_collapsed
         if self.toolbar_collapsed:
             self.toolbar.hide()
@@ -660,7 +660,7 @@ class ScreenViewerWindow(QMainWindow):
                     break
             self.combo_screen.blockSignals(False)
 
-    def user_exit(self):
+    def user_exit(self, *args):
         self.user_initiated_close = True
         self.close()
 
@@ -670,7 +670,7 @@ class ScreenViewerWindow(QMainWindow):
             QMessageBox.information(self, "Session Ended", "The remote screen sharing session has ended.")
         self.close()
 
-    def toggle_audio(self):
+    def toggle_audio(self, *args):
         self.audio_enabled = not self.audio_enabled
         self.client.set_audio_muted(not self.audio_enabled)
         if self.audio_enabled:
@@ -680,7 +680,7 @@ class ScreenViewerWindow(QMainWindow):
             self.btn_audio.setText("Audio: MUTED")
             self.btn_audio.setStyleSheet("background-color: #192138; border: 1px solid rgba(255, 255, 255, 0.1); color: #64748b; border-radius: 6px; padding: 3px 10px; font-size: 11px;")
 
-    def toggle_control(self):
+    def toggle_control(self, *args):
         self.remote_control_enabled = not self.remote_control_enabled
         if self.remote_control_enabled:
             self.btn_control.setText("Control: ON")
@@ -690,7 +690,7 @@ class ScreenViewerWindow(QMainWindow):
             self.btn_control.setStyleSheet("background-color: #192138; border: 1px solid rgba(255, 255, 255, 0.1); color: #64748b; border-radius: 6px; padding: 3px 10px; font-size: 11px;")
         self.client.permissions["control"] = self.remote_control_enabled
 
-    def toggle_fullscreen(self):
+    def toggle_fullscreen(self, *args):
         if self.isFullScreen():
             self.showNormal()
             self.btn_fs.setText("Fullscreen")
@@ -755,8 +755,8 @@ class ScreenCanvas(QWidget):
             return None
         x = pos.x() - vx
         y = pos.y() - vy
-        if 0 <= x <= vw and 0 <= y <= vh:
-            return (x / vw, y / vh)
+        if -4 <= x <= vw + 4 and -4 <= y <= vh + 4:
+            return (max(0.0, min(1.0, x / vw)), max(0.0, min(1.0, y / vh)))
         return None
 
     def mouseMoveEvent(self, event):
@@ -821,7 +821,7 @@ class ScreenCanvas(QWidget):
         }
         if k in map_tbl:
             return map_tbl[k]
-        if text and 32 <= ord(text[0]) <= 126:
+        if text and ord(text[0]) >= 32:
             return text
         if 32 <= k <= 126:
             return chr(k).lower()
@@ -845,6 +845,12 @@ class ScreenCaptureWorker(threading.Thread):
                 time.sleep(0.04)
                 continue
 
+            # Only do capture work if at least one client is actively connected
+            if not self.win.server.has_active_clients():
+                time.sleep(0.05)
+                continue
+
+            target_interval = 0.025
             try:
                 screen_idx = self.win.selected_screen_idx
                 screens = QGuiApplication.screens()
@@ -857,17 +863,20 @@ class ScreenCaptureWorker(threading.Thread):
                         combined.fill(Qt.GlobalColor.black)
                         painter = QPainter(combined)
                         for s in screens:
-                            spix = s.grabWindow(0)
                             sgeo = s.geometry()
+                            spix = s.grabWindow(0, 0, 0, sgeo.width(), sgeo.height())
                             painter.drawPixmap(sgeo.x() - vgeom.x(), sgeo.y() - vgeom.y(), spix)
                         painter.end()
                         pix = combined
                     else:
-                        pix = QGuiApplication.primaryScreen().grabWindow(0)
+                        pgeo = QGuiApplication.primaryScreen().geometry()
+                        pix = QGuiApplication.primaryScreen().grabWindow(0, 0, 0, pgeo.width(), pgeo.height())
                 elif 0 <= screen_idx < len(screens):
-                    pix = screens[screen_idx].grabWindow(0)
+                    sgeo = screens[screen_idx].geometry()
+                    pix = screens[screen_idx].grabWindow(0, 0, 0, sgeo.width(), sgeo.height())
                 else:
-                    pix = QGuiApplication.primaryScreen().grabWindow(0)
+                    pgeo = QGuiApplication.primaryScreen().geometry()
+                    pix = QGuiApplication.primaryScreen().grabWindow(0, 0, 0, pgeo.width(), pgeo.height())
 
                 if pix and not pix.isNull():
                     # Draw system mouse cursor directly onto frame for stream viewers
@@ -906,19 +915,21 @@ class ScreenCaptureWorker(threading.Thread):
                         pass
 
                     q_idx = self.win.selected_quality_idx
-                    if q_idx == 0:    # Native Display Resolution (Ultra Crisp 100% • Original Clarity)
-                        quality = 72
-                        target_interval = 0.012
+                    if q_idx == 0:    # Native Display Resolution (Ultra-Crisp 100% • Original Clarity)
+                        if pix.width() > 1920:
+                            pix = pix.scaledToWidth(1920, Qt.TransformationMode.SmoothTransformation)
+                        quality = 82
+                        target_interval = 0.025
                     elif q_idx == 1:  # 1080p Full HD (Crisp • Smooth 60 FPS)
                         if pix.width() > 1920:
-                            pix = pix.scaledToWidth(1920, Qt.TransformationMode.FastTransformation)
-                        quality = 70
-                        target_interval = 0.012
+                            pix = pix.scaledToWidth(1920, Qt.TransformationMode.SmoothTransformation)
+                        quality = 76
+                        target_interval = 0.025
                     else:             # 720p HD (Balanced • Low Bandwidth)
                         if pix.width() > 1280:
-                            pix = pix.scaledToWidth(1280, Qt.TransformationMode.FastTransformation)
-                        quality = 62
-                        target_interval = 0.012
+                            pix = pix.scaledToWidth(1280, Qt.TransformationMode.SmoothTransformation)
+                        quality = 65
+                        target_interval = 0.025
 
                     buf = QBuffer()
                     buf.open(QIODevice.OpenModeFlag.WriteOnly)
@@ -929,7 +940,7 @@ class ScreenCaptureWorker(threading.Thread):
                 pass
 
             elapsed = time.time() - t0
-            sleep_time = max(0.001, target_interval - elapsed)
+            sleep_time = max(0.002, target_interval - elapsed)
             time.sleep(sleep_time)
 
     def stop(self):
@@ -1066,12 +1077,26 @@ class LanCastMainWindow(QMainWindow):
 
         self.combo_screen = QComboBox()
         self.screens = QGuiApplication.screens()
-        if len(self.screens) > 1:
-            self.combo_screen.addItem("All Connected Displays (Virtual Canvas)", -1)
+        primary_screen = QGuiApplication.primaryScreen()
+        primary_idx = 0
+        for i, s in enumerate(self.screens):
+            if s == primary_screen:
+                primary_idx = i
+                break
+
         for i, s in enumerate(self.screens):
             geo = s.geometry()
-            is_primary = "  (Primary)" if s == QGuiApplication.primaryScreen() else ""
+            is_primary = "  (Primary)" if s == primary_screen else ""
             self.combo_screen.addItem(f"Display {i+1}: {s.name()} ({geo.width()}x{geo.height()}){is_primary}", i)
+
+        if len(self.screens) > 1:
+            self.combo_screen.addItem(f"All Displays ({len(self.screens)} Screens Combined)", -1)
+
+        for c in range(self.combo_screen.count()):
+            if self.combo_screen.itemData(c) == primary_idx:
+                self.combo_screen.setCurrentIndex(c)
+                break
+
         self.combo_screen.currentIndexChanged.connect(self.on_screen_selected)
         screen_select_layout.addWidget(self.combo_screen)
         host_layout.addLayout(screen_select_layout)
@@ -1295,9 +1320,12 @@ class LanCastMainWindow(QMainWindow):
             total_rect = QGuiApplication.primaryScreen().virtualGeometry()
             rect = (total_rect.x(), total_rect.y(), total_rect.width(), total_rect.height())
         else:
-            primary_s = QGuiApplication.primaryScreen()
-            geo = primary_s.geometry() if primary_s else None
-            rect = (geo.x(), geo.y(), geo.width(), geo.height()) if geo else (0, 0, 1920, 1080)
+            s_idx = self.selected_screen_idx if (self.selected_screen_idx is not None and 0 <= self.selected_screen_idx < len(self.screens)) else 0
+            if s_idx < len(self.screens):
+                geo = self.screens[s_idx].geometry()
+                rect = (geo.x(), geo.y(), geo.width(), geo.height())
+            else:
+                rect = (0, 0, 1920, 1080)
 
         # 1. Start Server with default password active
         self.server = LanCastServer(host='0.0.0.0', port=5858, screen_rect=rect)
@@ -1309,7 +1337,7 @@ class LanCastMainWindow(QMainWindow):
         self.server.on_clipboard_received = lambda txt: self.bridge.clipboard_received.emit(txt)
         self.server.on_screen_switch_requested = lambda sid: self.bridge.screen_switch_requested.emit(sid)
         self.server.on_quality_switch_requested = self.on_quality_selected
-        self.server.on_peer_detected = lambda ip, name, port: self.discovery._register_device(ip=ip, name=name, port=port) if self.discovery else None
+        self.server.on_peer_detected = lambda ip, name, port, sharing=True: (self.discovery._register_device(ip=ip, name=name, port=port) if sharing else self.discovery._remove_device(ip)) if self.discovery else None
         self.server.on_sharing_changed = lambda val: self.bridge.sharing_toggled.emit(val)
         self.update_available_screens()
         self.server.start()
@@ -1321,14 +1349,15 @@ class LanCastMainWindow(QMainWindow):
         self.capture_worker = ScreenCaptureWorker(self)
         self.capture_worker.start()
 
-        # 3. Start UDP Discovery Beacon
+        # 3. Start UDP Discovery Beacon (Pauses when stream is active)
         self.discovery = LanDiscovery(
             device_name=self.my_name,
             local_ip=self.my_ip,
             tcp_port=self.server.port,
             on_device_found=lambda dev, is_new: self.bridge.device_discovered.emit(dev, is_new),
             on_device_lost=lambda dev_id: self.bridge.device_lost.emit(dev_id),
-            is_sharing_fn=lambda: self.is_sharing
+            is_sharing_fn=lambda: self.is_sharing,
+            is_active_session_fn=lambda: bool(self.active_viewer_window or (self.server and self.server.has_active_clients()))
         )
         self.discovery.start()
 
@@ -1365,7 +1394,7 @@ class LanCastMainWindow(QMainWindow):
         if self.chk_require_pwd.isChecked():
             self.server.access_password = text.strip()
 
-    def toggle_password_mask(self):
+    def toggle_password_mask(self, *args):
         if self.txt_host_pwd.echoMode() == QLineEdit.EchoMode.Password:
             self.txt_host_pwd.setEchoMode(QLineEdit.EchoMode.Normal)
             self.btn_toggle_mask.setText("Hide")
@@ -1373,14 +1402,14 @@ class LanCastMainWindow(QMainWindow):
             self.txt_host_pwd.setEchoMode(QLineEdit.EchoMode.Password)
             self.btn_toggle_mask.setText("Show")
 
-    def generate_new_password(self):
+    def generate_new_password(self, *args):
         new_pwd = generate_random_password(6)
         self.txt_host_pwd.setText(new_pwd)
         self.server.access_password = new_pwd
         self.btn_new_pwd.setText("Done!")
         QTimer.singleShot(1000, lambda: self.btn_new_pwd.setText("New"))
 
-    def copy_password(self):
+    def copy_password(self, *args):
         cb = QApplication.clipboard()
         cb.setText(self.txt_host_pwd.text().strip())
         self.btn_copy_pwd.setText("Copied!")
@@ -1410,7 +1439,7 @@ class LanCastMainWindow(QMainWindow):
             cb.setText(text)
             cb.blockSignals(False)
 
-    def copy_local_ip(self):
+    def copy_local_ip(self, *args):
         cb = QApplication.clipboard()
         cb.setText(self.my_ip)
         self.btn_copy_ip.setText("Copied!")
@@ -1423,12 +1452,12 @@ class LanCastMainWindow(QMainWindow):
     def update_available_screens(self):
         self.screens = QGuiApplication.screens()
         screens_info = []
-        if len(self.screens) > 1:
-            screens_info.append({"id": -1, "name": f"All Displays ({len(self.screens)} Screens Combined)"})
         for i, s in enumerate(self.screens):
             geo = s.geometry()
             is_prim = " (Primary)" if s == QGuiApplication.primaryScreen() else ""
             screens_info.append({"id": i, "name": f"Display {i+1}: {s.name()} ({geo.width()}x{geo.height()}){is_prim}"})
+        if len(self.screens) > 1:
+            screens_info.append({"id": -1, "name": f"All Displays ({len(self.screens)} Screens Combined)"})
         if self.server:
             self.server.set_available_screens(screens_info, active_id=self.selected_screen_idx)
         return screens_info
@@ -1475,7 +1504,7 @@ class LanCastMainWindow(QMainWindow):
             self.combo_quality.setCurrentIndex(idx)
             self.combo_quality.blockSignals(False)
 
-    def toggle_sharing(self):
+    def toggle_sharing(self, *args):
         if self.is_sharing:
             self.stop_sharing()
         else:
@@ -1575,8 +1604,6 @@ class LanCastMainWindow(QMainWindow):
         self.lbl_viewers.setText(f"{cnt} Viewer{'s' if cnt != 1 else ''} Connected")
         if cnt == 0:
             self.lbl_viewers.setStyleSheet("font-size: 11px; font-weight: 600; color: #64748b; padding-left: 2px;")
-            if self.is_sharing:
-                self.stop_sharing()
 
     def on_device_discovered(self, dev: dict, is_new: bool):
         self.empty_state_frame.setVisible(False)
@@ -1660,7 +1687,7 @@ class LanCastMainWindow(QMainWindow):
         if count == 0:
             self.empty_state_frame.setVisible(True)
 
-    def trigger_subnet_scan(self):
+    def trigger_subnet_scan(self, *args):
         if self.discovery and not self.discovery.is_scanning:
             self.btn_rescan.setText("Scanning...")
             self.btn_rescan.setEnabled(False)
@@ -1695,7 +1722,7 @@ class LanCastMainWindow(QMainWindow):
         self.txt_remote_port.setText(str(port))
         self.connect_to_target()
 
-    def connect_to_target(self):
+    def connect_to_target(self, *args):
         ip = self.txt_remote_ip.text().strip()
         if not ip:
             QMessageBox.warning(self, "Invalid Address", "Please enter a valid remote IP address.")
@@ -1707,7 +1734,7 @@ class LanCastMainWindow(QMainWindow):
 
         self.connect_to_ip(ip, port, password)
 
-    def test_local_view(self):
+    def test_local_view(self, *args):
         if not self.is_sharing:
             self.start_sharing()
         self.connect_to_ip("127.0.0.1", self.server.port, password=self.server.access_password)

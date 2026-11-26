@@ -2,8 +2,11 @@ package com.dogremote.local;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.media.projection.MediaProjectionManager;
 import android.net.ConnectivityManager;
+import android.net.LinkAddress;
+import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -14,8 +17,11 @@ import android.util.Log;
 import com.getcapacitor.BridgeActivity;
 import org.json.JSONObject;
 
+import java.io.FileDescriptor;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -23,6 +29,7 @@ import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketImpl;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
@@ -40,11 +47,69 @@ public class MainActivity extends BridgeActivity {
     private static final int TCP_PORT = 5859;
     private static final int REQUEST_MEDIA_PROJECTION = 2026;
 
+    private static volatile MainActivity instance = null;
+
+    public static MainActivity getInstance() {
+        return instance;
+    }
+
+    public static void bindSocketToPhysicalWifi(Object socketOrFd) {
+        MainActivity act = instance;
+        if (act != null) {
+            act.bindSocketToWifi(socketOrFd);
+        }
+    }
+
+    public void bindSocketToWifi(Object socketOrFd) {
+        final Network net = wifiNetwork;
+        if (net == null || socketOrFd == null) return;
+        try {
+            if (socketOrFd instanceof Socket) {
+                net.bindSocket((Socket) socketOrFd);
+            } else if (socketOrFd instanceof DatagramSocket) {
+                net.bindSocket((DatagramSocket) socketOrFd);
+            } else if (socketOrFd instanceof FileDescriptor) {
+                net.bindSocket((FileDescriptor) socketOrFd);
+            } else if (socketOrFd instanceof ServerSocket) {
+                ServerSocket ss = (ServerSocket) socketOrFd;
+                try {
+                    Method m = ServerSocket.class.getDeclaredMethod("getFileDescriptor$");
+                    m.setAccessible(true);
+                    FileDescriptor fd = (FileDescriptor) m.invoke(ss);
+                    if (fd != null && fd.valid()) {
+                        net.bindSocket(fd);
+                        Log.d(TAG, "Successfully bound ServerSocket fd to physical Wi-Fi!");
+                    }
+                } catch (Exception e1) {
+                    try {
+                        Field f = ServerSocket.class.getDeclaredField("impl");
+                        f.setAccessible(true);
+                        Object impl = f.get(ss);
+                        Field fFd = SocketImpl.class.getDeclaredField("fd");
+                        fFd.setAccessible(true);
+                        FileDescriptor fd = (FileDescriptor) fFd.get(impl);
+                        if (fd != null && fd.valid()) {
+                            net.bindSocket(fd);
+                            Log.d(TAG, "Successfully bound ServerSocket impl.fd to physical Wi-Fi!");
+                        }
+                    } catch (Exception e2) {
+                        Log.w(TAG, "Could not bind ServerSocket to wifi: " + e2.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "bindSocketToWifi error: " + e.getMessage());
+        }
+    }
+
     private WifiManager.MulticastLock multicastLock;
     private ConnectivityManager connectivityManager;
     private volatile Network wifiNetwork = null;
     private volatile boolean isRunning = true;
     private volatile boolean isSharingScreen = false;
+    private volatile String hostPassword = "";
+    private volatile boolean isPasswordRequired = true;
+    private volatile boolean isControlAllowed = true;
     private DatagramSocket udpSocket;
     private ServerSocket tcpDiscoveryServer;
     private final Map<String, String> discoveredPeers = new ConcurrentHashMap<>();
@@ -73,6 +138,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        instance = this;
         android.webkit.WebView.setWebContentsDebuggingEnabled(true);
 
         // Bind process explicitly to Wi-Fi to bypass any active VPN (NetMod, etc.)
@@ -91,6 +157,19 @@ public class MainActivity extends BridgeActivity {
             Log.w(TAG, "Could not acquire MulticastLock", e);
         }
 
+        // Load or initialize host security PIN & settings
+        SharedPreferences prefs = getSharedPreferences("DogRemotePrefs", Context.MODE_PRIVATE);
+        hostPassword = prefs.getString("host_password", "");
+        isPasswordRequired = prefs.getBoolean("require_password", true);
+        isControlAllowed = prefs.getBoolean("allow_control", true);
+        if (hostPassword.isEmpty()) {
+            hostPassword = String.valueOf((int) (100000 + Math.random() * 900000));
+            prefs.edit().putString("host_password", hostPassword)
+                    .putBoolean("require_password", isPasswordRequired)
+                    .putBoolean("allow_control", isControlAllowed)
+                    .apply();
+        }
+
         // Expose Native JavaScript Bridge for Phone Screen Sharing
         if (bridge != null && bridge.getWebView() != null) {
             bridge.getWebView().addJavascriptInterface(new Object() {
@@ -103,8 +182,74 @@ public class MainActivity extends BridgeActivity {
                 public void stopSharing() {
                     runOnUiThread(() -> stopScreenCapture());
                 }
+
+                @android.webkit.JavascriptInterface
+                public void openAccessibilitySettings() {
+                    runOnUiThread(() -> {
+                        try {
+                            Intent intent = new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS);
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(intent);
+                        } catch (Exception e) {
+                            Log.e(TAG, "Cannot open accessibility settings", e);
+                        }
+                    });
+                }
+
+                @android.webkit.JavascriptInterface
+                public boolean isAccessibilityEnabled() {
+                    return DogAccessibilityService.getInstance() != null;
+                }
+
+                @android.webkit.JavascriptInterface
+                public String getConnectedClientsInfo() {
+                    JSONObject res = new JSONObject();
+                    try {
+                        res.put("count", ScreenShareService.getClientCount());
+                        res.put("sharing", isSharingScreen);
+                    } catch (Exception ignored) {}
+                    return res.toString();
+                }
+
+                @android.webkit.JavascriptInterface
+                public void setHostSecurity(String password, boolean requirePassword, boolean allowControl) {
+                    hostPassword = (password != null) ? password.trim() : "";
+                    isPasswordRequired = requirePassword;
+                    isControlAllowed = allowControl;
+                    SharedPreferences p = getSharedPreferences("DogRemotePrefs", Context.MODE_PRIVATE);
+                    p.edit().putString("host_password", hostPassword)
+                            .putBoolean("require_password", isPasswordRequired)
+                            .putBoolean("allow_control", isControlAllowed)
+                            .apply();
+                    Log.d(TAG, "Host security updated: PIN=" + (isPasswordRequired ? hostPassword : "DISABLED") + ", allowControl=" + isControlAllowed);
+                }
+
+                @android.webkit.JavascriptInterface
+                public void setHostPassword(String password, boolean requirePassword) {
+                    setHostSecurity(password, requirePassword, isControlAllowed);
+                }
+
+                @android.webkit.JavascriptInterface
+                public String getHostPassword() {
+                    return hostPassword != null ? hostPassword : "";
+                }
+
+                @android.webkit.JavascriptInterface
+                public boolean isPasswordRequired() {
+                    return isPasswordRequired;
+                }
+
+                @android.webkit.JavascriptInterface
+                public boolean isControlAllowed() {
+                    return isControlAllowed;
+                }
             }, "DogRemoteNativeBridge");
         }
+
+        // Listen to ScreenShareService client status updates
+        ScreenShareService.setClientListener((count, clientName, clientIp, joined) -> {
+            notifyWebviewClientsChanged(count, clientName, clientIp, joined);
+        });
 
         // Start Background UDP and TCP Discovery
         startDiscoveryWorker();
@@ -123,6 +268,28 @@ public class MainActivity extends BridgeActivity {
         serviceIntent.setAction(ScreenShareService.ACTION_STOP);
         startService(serviceIntent);
         notifyWebviewPhoneSharingChanged(false);
+
+        // Broadcast offline UDP beacon so PCs remove the phone immediately
+        new Thread(() -> {
+            try {
+                String localIp = getLocalIpAddress();
+                if (localIp != null) {
+                    JSONObject json = new JSONObject();
+                    json.put("service", "lancast");
+                    json.put("name", getDeviceName());
+                    json.put("ip", localIp);
+                    json.put("port", TCP_PORT);
+                    json.put("sharing", false);
+                    byte[] data = json.toString().getBytes("UTF-8");
+                    DatagramSocket s = new DatagramSocket();
+                    s.setBroadcast(true);
+                    bindSocketToWifi(s);
+                    s.send(new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"), UDP_PORT));
+                    s.send(new DatagramPacket(data, data.length, InetAddress.getByName("192.168.8.185"), UDP_PORT));
+                    s.close();
+                }
+            } catch (Exception ignored) {}
+        }).start();
     }
 
     @Override
@@ -163,6 +330,8 @@ public class MainActivity extends BridgeActivity {
                     wifiNetwork = net;
                     boolean bound = connectivityManager.bindProcessToNetwork(net);
                     Log.d(TAG, "Initial bindProcessToNetwork to physical Wi-Fi: " + bound + " (net=" + net + ")");
+                    bindSocketToWifi(tcpDiscoveryServer);
+                    bindSocketToWifi(udpSocket);
                     break;
                 }
             }
@@ -182,12 +351,42 @@ public class MainActivity extends BridgeActivity {
                     } catch (Exception e) {
                         Log.w(TAG, "Error binding process to physical Wi-Fi network", e);
                     }
+                    bindSocketToWifi(tcpDiscoveryServer);
+                    bindSocketToWifi(udpSocket);
+                    if (!isRunning) {
+                        startDiscoveryWorker();
+                    }
+                }
+
+                @Override
+                public void onLinkPropertiesChanged(Network network, LinkProperties linkProperties) {
+                    wifiNetwork = network;
+                    try {
+                        connectivityManager.bindProcessToNetwork(network);
+                    } catch (Exception ignored) {}
+                    bindSocketToWifi(tcpDiscoveryServer);
+                    bindSocketToWifi(udpSocket);
+                    String ip = getLocalIpAddress();
+                    Log.d(TAG, "NetworkCallback onLinkPropertiesChanged: ip=" + ip);
+                    if (ip != null && bridge != null && bridge.getWebView() != null) {
+                        runOnUiThread(() -> {
+                            try {
+                                bridge.getWebView().evaluateJavascript(
+                                    "if(typeof discoverLocalDevices === 'function') discoverLocalDevices();",
+                                    null
+                                );
+                            } catch (Exception ignored) {}
+                        });
+                    }
                 }
 
                 @Override
                 public void onLost(Network network) {
                     if (network.equals(wifiNetwork)) {
                         wifiNetwork = null;
+                        try {
+                            connectivityManager.bindProcessToNetwork(null);
+                        } catch (Exception ignored) {}
                         Log.d(TAG, "Physical Wi-Fi network lost - clearing discovered peers");
                         discoveredPeers.clear();
                         notifyWebviewDisconnected();
@@ -208,7 +407,7 @@ public class MainActivity extends BridgeActivity {
             while (isRunning) {
                 try {
                     String localIp = getLocalIpAddress();
-                    if (localIp != null && isSharingScreen) {
+                    if (localIp != null && isSharingScreen && ScreenShareService.getClientCount() == 0) {
                         JSONObject json = new JSONObject();
                         json.put("service", "lancast");
                         json.put("name", deviceName);
@@ -219,6 +418,7 @@ public class MainActivity extends BridgeActivity {
 
                         DatagramSocket socket = new DatagramSocket();
                         socket.setBroadcast(true);
+                        bindSocketToWifi(socket);
 
                         // Limited broadcast
                         try {
@@ -264,6 +464,7 @@ public class MainActivity extends BridgeActivity {
                 udpSocket = new DatagramSocket(null);
                 udpSocket.setReuseAddress(true);
                 udpSocket.setBroadcast(true);
+                bindSocketToWifi(udpSocket);
                 udpSocket.bind(new InetSocketAddress(InetAddress.getByName("0.0.0.0"), UDP_PORT));
                 Log.d(TAG, "UDP listener bound to 0.0.0.0:" + UDP_PORT);
 
@@ -311,11 +512,14 @@ public class MainActivity extends BridgeActivity {
             try {
                 tcpDiscoveryServer = new ServerSocket();
                 tcpDiscoveryServer.setReuseAddress(true);
+                bindSocketToWifi(tcpDiscoveryServer);
                 tcpDiscoveryServer.bind(new InetSocketAddress(InetAddress.getByName("0.0.0.0"), TCP_PORT));
+                bindSocketToWifi(tcpDiscoveryServer);
                 Log.d(TAG, "TCP Server listening on 0.0.0.0:" + TCP_PORT);
                 while (isRunning) {
                     try {
                         Socket client = tcpDiscoveryServer.accept();
+                        bindSocketToWifi(client);
                         new Thread(() -> handleIncomingTcpClient(client, deviceName), "DogRemote-ClientHandler").start();
                     } catch (Exception ignored) {}
                 }
@@ -333,6 +537,16 @@ public class MainActivity extends BridgeActivity {
             Log.d(TAG, "Native scanner thread started!");
             while (isRunning) {
                 try {
+                    // Pause background scanner during active screen sharing to client to keep Wi-Fi free
+                    if (isSharingScreen || ScreenShareService.getClientCount() > 0) {
+                        try {
+                            Thread.sleep(4000);
+                        } catch (InterruptedException e) {
+                            break;
+                        }
+                        continue;
+                    }
+
                     String myIp = getLocalIpAddress();
                     if (myIp != null && myIp.contains(".")) {
                         String prefix = myIp.substring(0, myIp.lastIndexOf('.'));
@@ -401,6 +615,9 @@ public class MainActivity extends BridgeActivity {
                     client.getOutputStream().flush();
                     client.close();
                 } else if (head[0] == 2) { // TYPE_CONNECT_REQ
+                    String peerName = "Remote PC";
+                    String providedPassword = "";
+                    boolean reqControl = true;
                     int reqLen = ((head[1] & 0xFF) << 24) | ((head[2] & 0xFF) << 16) | ((head[3] & 0xFF) << 8) | (head[4] & 0xFF);
                     if (reqLen > 0 && reqLen < 65536) {
                         byte[] reqPayload = new byte[reqLen];
@@ -409,6 +626,45 @@ public class MainActivity extends BridgeActivity {
                             int count = is.read(reqPayload, readTotal, reqLen - readTotal);
                             if (count < 0) break;
                             readTotal += count;
+                        }
+                        try {
+                            JSONObject reqObj = new JSONObject(new String(reqPayload, "UTF-8"));
+                            peerName = reqObj.optString("name", "Remote PC");
+                            providedPassword = reqObj.optString("password", "").trim();
+                            reqControl = reqObj.optBoolean("req_control", true);
+                        } catch (Exception ignored) {}
+                    }
+
+                    // Security check: Verify host security password
+                    if (isPasswordRequired && hostPassword != null && !hostPassword.isEmpty()) {
+                        if (providedPassword.isEmpty()) {
+                            Log.w(TAG, "Rejecting connection from " + peerName + ": PASSWORD_REQUIRED");
+                            JSONObject resJson = new JSONObject();
+                            resJson.put("accepted", false);
+                            resJson.put("reason", "PASSWORD_REQUIRED");
+                            byte[] payload = resJson.toString().getBytes("UTF-8");
+                            ByteBuffer bb = ByteBuffer.allocate(1 + 4 + payload.length);
+                            bb.put((byte) 3); // TYPE_CONNECT_RES
+                            bb.putInt(payload.length);
+                            bb.put(payload);
+                            client.getOutputStream().write(bb.array());
+                            client.getOutputStream().flush();
+                            client.close();
+                            return;
+                        } else if (!providedPassword.equals(hostPassword)) {
+                            Log.w(TAG, "Rejecting connection from " + peerName + ": PASSWORD_INCORRECT");
+                            JSONObject resJson = new JSONObject();
+                            resJson.put("accepted", false);
+                            resJson.put("reason", "PASSWORD_INCORRECT");
+                            byte[] payload = resJson.toString().getBytes("UTF-8");
+                            ByteBuffer bb = ByteBuffer.allocate(1 + 4 + payload.length);
+                            bb.put((byte) 3); // TYPE_CONNECT_RES
+                            bb.putInt(payload.length);
+                            bb.put(payload);
+                            client.getOutputStream().write(bb.array());
+                            client.getOutputStream().flush();
+                            client.close();
+                            return;
                         }
                     }
 
@@ -426,7 +682,7 @@ public class MainActivity extends BridgeActivity {
 
                         // Wait up to 15 seconds for user to confirm the permission dialog on phone
                         long startWait = System.currentTimeMillis();
-                        while (!isSharingScreen && (System.currentTimeMillis() - startWait < 15000) && isRunning && !client.isClosed()) {
+                        while ((!isSharingScreen || ScreenShareService.getInstance() == null) && (System.currentTimeMillis() - startWait < 15000) && isRunning && !client.isClosed()) {
                             try {
                                 Thread.sleep(200);
                             } catch (InterruptedException e) {
@@ -441,7 +697,7 @@ public class MainActivity extends BridgeActivity {
                         resJson.put("accepted", true);
                         JSONObject perms = new JSONObject();
                         perms.put("screen", true);
-                        perms.put("control", false);
+                        perms.put("control", reqControl && isControlAllowed);
                         perms.put("audio", false);
                         resJson.put("permissions", perms);
                         byte[] payload = resJson.toString().getBytes("UTF-8");
@@ -453,8 +709,19 @@ public class MainActivity extends BridgeActivity {
                         client.getOutputStream().write(bb.array());
                         client.getOutputStream().flush();
 
+                        String clientIp = "";
+                        if (client.getInetAddress() != null) {
+                            clientIp = client.getInetAddress().getHostAddress();
+                            if (clientIp != null && clientIp.startsWith("::ffff:")) {
+                                clientIp = clientIp.substring(7);
+                            }
+                        }
+                        if (clientIp == null || clientIp.isEmpty()) {
+                            clientIp = "PC Client";
+                        }
+
                         // Add to streaming clients and do NOT close client socket!
-                        ScreenShareService.addStreamingClient(client);
+                        ScreenShareService.addStreamingClient(client, peerName, clientIp);
                         return;
                     } else {
                         // Rejected or user did not start screen sharing
@@ -483,18 +750,10 @@ public class MainActivity extends BridgeActivity {
 
     private void probeTarget(String ip, int port) {
         try {
-            Socket s;
-            if (wifiNetwork != null) {
-                try {
-                    s = wifiNetwork.getSocketFactory().createSocket();
-                } catch (Exception se) {
-                    s = new Socket();
-                }
-            } else {
-                s = new Socket();
-            }
+            Socket s = new Socket();
             s.setTcpNoDelay(true);
             s.setReuseAddress(true);
+            bindSocketToWifi(s);
             s.connect(new InetSocketAddress(ip, port), 1200);
             s.setSoTimeout(1500);
 
@@ -615,13 +874,54 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
+    public void notifyWebviewClientsChanged(final int count, final String clientName, final String clientIp, final boolean joined) {
+        runOnUiThread(() -> {
+            try {
+                if (bridge != null && bridge.getWebView() != null) {
+                    String cleanName = clientName != null ? clientName.replace("'", "\\'") : "Remote Device";
+                    String cleanIp = clientIp != null ? clientIp.replace("'", "\\'") : "";
+                    String js = "if (window.onHostClientsChanged) { window.onHostClientsChanged(" 
+                            + count + ", '" + cleanName + "', '" + cleanIp + "', " + joined + "); }";
+                    bridge.getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Error evaluating JS", e);
+            }
+        });
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        ScreenShareService.setClientListener((count, clientName, clientIp, joined) -> {
+            notifyWebviewClientsChanged(count, clientName, clientIp, joined);
+        });
+        int currentCount = ScreenShareService.getClientCount();
+        notifyWebviewClientsChanged(currentCount, "Remote Device", "", false);
+        notifyWebviewPhoneSharingChanged(isSharingScreen);
+    }
+
     private String getLocalIpAddress() {
         try {
+            if (connectivityManager != null && wifiNetwork != null) {
+                LinkProperties lp = connectivityManager.getLinkProperties(wifiNetwork);
+                if (lp != null) {
+                    for (LinkAddress la : lp.getLinkAddresses()) {
+                        InetAddress addr = la.getAddress();
+                        if (addr != null && !addr.isLoopbackAddress() && addr.getAddress().length == 4) {
+                            String ip = addr.getHostAddress();
+                            if (ip != null && !ip.startsWith("26.") && !ip.startsWith("127.")) {
+                                return ip;
+                            }
+                        }
+                    }
+                }
+            }
             List<NetworkInterface> interfaces = Collections.list(NetworkInterface.getNetworkInterfaces());
             for (NetworkInterface intf : interfaces) {
                 if (intf.isLoopback() || !intf.isUp()) continue;
                 String ifName = intf.getName().toLowerCase();
-                if (ifName.contains("wlan") || ifName.contains("eth")) {
+                if (ifName.contains("wlan") || ifName.contains("eth") || ifName.contains("swlan") || ifName.contains("ap")) {
                     for (InetAddress addr : Collections.list(intf.getInetAddresses())) {
                         if (!addr.isLoopbackAddress() && addr.getAddress().length == 4) {
                             String ip = addr.getHostAddress();
@@ -642,6 +942,9 @@ public class MainActivity extends BridgeActivity {
         if (isSharingScreen) {
             stopScreenCapture();
         }
+        try {
+            stopService(new Intent(this, ScreenShareService.class));
+        } catch (Exception ignored) {}
         if (udpSocket != null && !udpSocket.isClosed()) {
             udpSocket.close();
         }
@@ -653,6 +956,7 @@ public class MainActivity extends BridgeActivity {
         if (multicastLock != null && multicastLock.isHeld()) {
             multicastLock.release();
         }
+        instance = null;
         super.onDestroy();
     }
 }

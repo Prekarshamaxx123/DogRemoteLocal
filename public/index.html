@@ -80,9 +80,39 @@
                 <div class="section-tag">HOST SCREEN SHARE</div>
                 <h2 class="card-title">Share This Phone's Screen</h2>
                 <p class="card-subtitle">Broadcast your phone screen over Wi-Fi so PC can view and control it.</p>
+                <div class="host-pin-banner" style="display: flex; align-items: center; justify-content: space-between; background: rgba(30, 41, 59, 0.75); border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px;">
+                    <div>
+                        <div style="font-size: 11px; font-weight: 700; color: #94a3b8; letter-spacing: 0.5px;">HOST SECURITY PIN FOR PC</div>
+                        <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Enter this PIN on PC when connecting</div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span id="hostPinDisplay" style="font-family: monospace; font-size: 18px; font-weight: 800; color: #38bdf8; letter-spacing: 2px;">------</span>
+                    </div>
+                </div>
                 <button type="button" id="sharePhoneScreenBtn" class="btn-cta btn-share-phone">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
                     <span id="sharePhoneBtnText">Start Sharing Screen</span>
+                </button>
+
+                <!-- Live Connected Client Banner (When PC connects to view/control phone) -->
+                <div id="hostClientStatusBox" class="host-client-box" style="display: none;">
+                    <div class="host-client-header">
+                        <span class="status-dot-pulse"></span>
+                        <span id="hostClientCountText" class="host-client-title">1 Device Connected</span>
+                        <span class="host-client-tag">VIEWING &amp; CONTROL</span>
+                    </div>
+                    <div class="host-client-body">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                        <div class="host-client-info">
+                            <div id="hostClientNameText" class="host-client-name">Linux PC (kali-home)</div>
+                            <div id="hostClientIpText" class="host-client-ip">192.168.8.185:5859 • Active</div>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="button" id="enableA11yBtn" class="btn-secondary btn-sm" style="margin-top: 10px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/><circle cx="12" cy="12" r="4"/></svg>
+                    <span id="a11yBtnText">Remote Control Permission</span>
                 </button>
             </div>
 
@@ -212,7 +242,7 @@
             <div id="canvasWrapper" class="canvas-wrapper">
                 <canvas id="screenCanvas"></canvas>
                 <div id="virtualCursor" class="virtual-cursor" style="display: none;">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                         <polygon points="3 3 3 21 8 16 13 23 16 21 11 15 19 15 3 3" fill="#ffffff" stroke="#000000" stroke-width="1.8" stroke-linejoin="round"/>
                     </svg>
                 </div>

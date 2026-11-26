@@ -58,11 +58,12 @@ class WsClientWrapper:
             next_f = self.pending_frame
             self.pending_frame = None
             try:
-                self.loop.call_soon_threadsafe(asyncio.create_task, self._send_frame(next_f))
+                # Yield control to event loop so input events (mouse, keys, ping) process instantly
+                await asyncio.sleep(0.002)
+                await self.ws.send(next_f)
             except Exception:
-                self.is_sending = False
-        else:
-            self.is_sending = False
+                pass
+        self.is_sending = False
 
 class LanCastServer:
     def __init__(self, host='0.0.0.0', port=5858, screen_rect=(0, 0, 1920, 1080)):
@@ -239,6 +240,13 @@ class LanCastServer:
                     break
                 import time
                 time.sleep(0.1)
+
+    def has_active_clients(self) -> bool:
+        """Returns True if any approved client or WebSocket client is currently connected."""
+        if self.ws_clients:
+            return True
+        with self._lock:
+            return any(c.is_approved and c.running for c in self.clients)
 
     def broadcast_frame(self, jpeg_bytes: bytes):
         """Dispatches latest frame to all clients with zero queue lag."""
@@ -434,15 +442,23 @@ class LanCastServer:
         client_ip = websocket.remote_address[0] if websocket.remote_address else ""
 
         try:
+            sock = websocket.transport.get_extra_info('socket')
+            if sock:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except Exception:
+            pass
+
+        try:
             raw = await websocket.recv()
             if isinstance(raw, str):
                 data = json.loads(raw)
                 client_name = data.get("name", client_name)
                 mtype = data.get("type", "")
+                peer_sharing = bool(data.get("sharing", False))
 
                 if self.on_peer_detected and client_ip and not client_ip.startswith("127."):
                     try:
-                        self.on_peer_detected(client_ip, client_name, 5859)
+                        self.on_peer_detected(client_ip, client_name, 5859, peer_sharing)
                     except Exception:
                         pass
 
@@ -526,13 +542,14 @@ class LanCastServer:
         except Exception:
             pass
         finally:
-            self.ws_clients.pop(websocket, None)
-            print(f"[DogRemote] Mobile client disconnected: {client_name}")
-            if self.on_client_left:
-                try:
-                    self.on_client_left(None)
-                except Exception:
-                    pass
+            existed = self.ws_clients.pop(websocket, None) is not None
+            if existed:
+                print(f"[DogRemote] Mobile client disconnected: {client_name}")
+                if self.on_client_left:
+                    try:
+                        self.on_client_left(None)
+                    except Exception:
+                        pass
 
 class ClientSession:
     def __init__(self, server: LanCastServer, sock: socket.socket, addr):

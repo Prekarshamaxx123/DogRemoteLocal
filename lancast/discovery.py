@@ -13,13 +13,14 @@ from concurrent.futures import ThreadPoolExecutor
 UDP_DISCOVERY_PORT = 5857
 
 class LanDiscovery:
-    def __init__(self, device_name: str, local_ip: str, tcp_port: int = 5858, on_device_found=None, on_device_lost=None, is_sharing_fn=None):
+    def __init__(self, device_name: str, local_ip: str, tcp_port: int = 5858, on_device_found=None, on_device_lost=None, is_sharing_fn=None, is_active_session_fn=None):
         self.device_name = device_name
         self.local_ip = local_ip
         self.tcp_port = tcp_port
         self.on_device_found = on_device_found
         self.on_device_lost = on_device_lost
         self.is_sharing_fn = is_sharing_fn
+        self.is_active_session_fn = is_active_session_fn
         
         self.running = False
         self.is_scanning = False
@@ -47,6 +48,11 @@ class LanDiscovery:
         sock.settimeout(1.0)
 
         while self.running:
+            # If in an active session (viewing or streaming to client), pause beacon to avoid Wi-Fi congestion
+            if self.is_active_session_fn and self.is_active_session_fn():
+                time.sleep(1.5)
+                continue
+
             # Only broadcast if actively sharing screen
             is_sharing = True if not self.is_sharing_fn else bool(self.is_sharing_fn())
             if not is_sharing:
@@ -134,6 +140,10 @@ class LanDiscovery:
     def scan_subnet(self, target_ports=None, on_complete=None):
         """On-demand parallel TCP subnet scan across target ports."""
         if self.is_scanning:
+            return
+        if self.is_active_session_fn and self.is_active_session_fn():
+            if on_complete:
+                on_complete()
             return
         
         if target_ports is None:

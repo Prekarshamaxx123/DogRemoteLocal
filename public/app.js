@@ -28,6 +28,7 @@
     // Host Settings Elements
     const requirePasswordCheckbox = document.getElementById('requirePasswordCheckbox');
     const hostPasswordInput = document.getElementById('hostPasswordInput');
+    const hostPinDisplay = document.getElementById('hostPinDisplay');
     const toggleHostMaskBtn = document.getElementById('toggleHostMaskBtn');
     const generateNewPwdBtn = document.getElementById('generateNewPwdBtn');
     const copyHostPwdBtn = document.getElementById('copyHostPwdBtn');
@@ -90,14 +91,21 @@
     let touchStartTime = 0;
     let touchStartX = 0;
     let touchStartY = 0;
+    let startTouchClientX = 0;
+    let startTouchClientY = 0;
     let isLongPress = false;
+    let isTouchDragging = false;
     let longPressTimer = null;
     let lastTapTime = 0;
     let isTrackpadMode = false;
+    let trackpadLastTapTime = 0;
+    let trackpadIsDragging = false;
     let virtualMouseX = 0.5;
     let virtualMouseY = 0.5;
     let prevTouchClientX = 0;
     let prevTouchClientY = 0;
+    let twoFingerStartTime = 0;
+    let twoFingerMoved = false;
 
     // Pinch-to-zoom & Pan state
     let currentZoom = 1.0;
@@ -110,14 +118,75 @@
 
     // Load saved settings
     const savedAddress = localStorage.getItem('dogremote_last_addr') || '';
-    if (savedAddress && !savedAddress.startsWith('26.')) {
+    if (savedAddress && !savedAddress.startsWith('26.') && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(savedAddress)) {
         remoteAddressInput.value = savedAddress;
     } else {
         remoteAddressInput.value = '192.168.8.185';
     }
+    remotePinInput.value = '';
 
     const savedHostPwd = localStorage.getItem('dogremote_host_pwd') || '';
     if (savedHostPwd) hostPasswordInput.value = savedHostPwd;
+
+    function updateHostPinDisplay() {
+        if (!hostPinDisplay) return;
+        const req = requirePasswordCheckbox ? requirePasswordCheckbox.checked : true;
+        const pwd = hostPasswordInput ? hostPasswordInput.value.trim() : '';
+        if (!req) {
+            hostPinDisplay.textContent = 'None';
+            hostPinDisplay.style.color = '#94a3b8';
+        } else {
+            hostPinDisplay.textContent = pwd || '------';
+            hostPinDisplay.style.color = '#38bdf8';
+        }
+    }
+
+    function syncHostSecurityToNative() {
+        const pwd = hostPasswordInput ? hostPasswordInput.value.trim() : '';
+        const req = requirePasswordCheckbox ? requirePasswordCheckbox.checked : true;
+        const allowCtrl = allowRemoteControlCheckbox ? allowRemoteControlCheckbox.checked : true;
+        localStorage.setItem('dogremote_host_pwd', pwd);
+        updateHostPinDisplay();
+        if (window.DogRemoteNativeBridge) {
+            if (window.DogRemoteNativeBridge.setHostSecurity) {
+                try {
+                    window.DogRemoteNativeBridge.setHostSecurity(pwd, req, allowCtrl);
+                } catch (e) {
+                    console.warn('Native bridge setHostSecurity error:', e);
+                }
+            } else if (window.DogRemoteNativeBridge.setHostPassword) {
+                try {
+                    window.DogRemoteNativeBridge.setHostPassword(pwd, req);
+                } catch (e) {}
+            }
+        }
+    }
+
+    // Read host security from native bridge if in Android app
+    if (window.DogRemoteNativeBridge && window.DogRemoteNativeBridge.getHostPassword) {
+        try {
+            const nativeHostPwd = window.DogRemoteNativeBridge.getHostPassword();
+            const nativeReq = window.DogRemoteNativeBridge.isPasswordRequired();
+            const nativeCtrl = (window.DogRemoteNativeBridge.isControlAllowed) ? window.DogRemoteNativeBridge.isControlAllowed() : true;
+            if (nativeHostPwd) {
+                hostPasswordInput.value = nativeHostPwd;
+                localStorage.setItem('dogremote_host_pwd', nativeHostPwd);
+            }
+            if (typeof nativeReq === 'boolean' && requirePasswordCheckbox) {
+                requirePasswordCheckbox.checked = nativeReq;
+                hostPasswordInput.disabled = !nativeReq;
+                toggleHostMaskBtn.disabled = !nativeReq;
+                generateNewPwdBtn.disabled = !nativeReq;
+                copyHostPwdBtn.disabled = !nativeReq;
+            }
+            if (typeof nativeCtrl === 'boolean' && allowRemoteControlCheckbox) {
+                allowRemoteControlCheckbox.checked = nativeCtrl;
+            }
+        } catch (e) {
+            console.warn('Native bridge getHostPassword error:', e);
+        }
+    }
+    updateHostPinDisplay();
 
     // Toast helper
     function showToast(message, duration = 2500) {
@@ -195,7 +264,7 @@
     generateNewPwdBtn.addEventListener('click', () => {
         const newPwd = Math.floor(100000 + Math.random() * 900000).toString();
         hostPasswordInput.value = newPwd;
-        localStorage.setItem('dogremote_host_pwd', newPwd);
+        syncHostSecurityToNative();
         generateNewPwdBtn.textContent = 'Done!';
         showToast(`Generated New Password: ${newPwd}`);
         setTimeout(() => generateNewPwdBtn.textContent = 'New', 1200);
@@ -213,7 +282,7 @@
     });
 
     hostPasswordInput.addEventListener('input', () => {
-        localStorage.setItem('dogremote_host_pwd', hostPasswordInput.value.trim());
+        syncHostSecurityToNative();
     });
 
     requirePasswordCheckbox.addEventListener('change', () => {
@@ -222,8 +291,15 @@
         toggleHostMaskBtn.disabled = !enabled;
         generateNewPwdBtn.disabled = !enabled;
         copyHostPwdBtn.disabled = !enabled;
+        syncHostSecurityToNative();
         showToast(enabled ? 'Password Protection Enabled' : 'Password Protection Disabled');
     });
+
+    if (allowRemoteControlCheckbox) {
+        allowRemoteControlCheckbox.addEventListener('change', () => {
+            syncHostSecurityToNative();
+        });
+    }
 
     // Copy IP button
     copyIpBtn.addEventListener('click', () => {
@@ -233,8 +309,16 @@
         }
     });
 
-    // Connect Button Click
-    connectBtn.addEventListener('click', () => {
+    // Connect Button Handling (Instant 1-tap with keyboard active)
+    let lastMainConnectTime = 0;
+    function triggerMainConnect(e) {
+        if (e && e.type === 'touchstart') {
+            e.preventDefault();
+        }
+        const now = Date.now();
+        if (now - lastMainConnectTime < 500) return;
+        lastMainConnectTime = now;
+
         const rawAddr = remoteAddressInput.value.trim();
         const portStr = remotePortInput.value.trim();
         const pin = remotePinInput.value.trim();
@@ -245,10 +329,27 @@
             return;
         }
 
+        remoteAddressInput.blur();
+        remotePinInput.blur();
         targetHost = parseAddress(rawAddr);
         targetPort = parseInt(portStr, 10) || 5859;
         localStorage.setItem('dogremote_last_addr', rawAddr);
         startConnection(targetHost, targetPort, pin);
+    }
+
+    connectBtn.addEventListener('pointerdown', triggerMainConnect);
+    connectBtn.addEventListener('touchstart', triggerMainConnect, { passive: false });
+    connectBtn.addEventListener('click', triggerMainConnect);
+
+    remotePinInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            triggerMainConnect(e);
+        }
+    });
+    remoteAddressInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            triggerMainConnect(e);
+        }
     });
 
     // WebSocket Connection
@@ -260,6 +361,8 @@
 
         targetHost = host;
         targetPort = port;
+        isScanningLocal = false;
+        if (refreshDiscoveryBtn) refreshDiscoveryBtn.classList.remove('rotating');
 
         showToast(`Connecting to ${host}:${port}...`);
         connectBtn.disabled = true;
@@ -350,7 +453,7 @@
         isConnected = true;
         connectBtn.disabled = false;
         connectBtn.querySelector('span').textContent = 'Connect & Control';
-        statusBadge.innerHTML = '<span class="status-dot"></span> Streaming Active';
+        statusBadge.innerHTML = `<span class="status-dot" style="background:#34d399; box-shadow:0 0 8px #34d399;"></span> Connected: ${targetHost}`;
         statusBadge.className = 'status-badge status-connected';
 
         // Switch to Viewer View
@@ -360,11 +463,16 @@
         // Populate Screen switcher
         populateScreens(info.screens || [], info.active_screen || 0);
 
+        // Initialize virtual cursor at center with immediate visibility
+        virtualMouseX = 0.5;
+        virtualMouseY = 0.5;
+        setTimeout(updateVirtualCursor, 150);
+
         // Send immediate ping
         sendPing();
         pingInterval = setInterval(sendPing, 1000);
 
-        showToast('Connected to Host!');
+        showToast(`Connected to Host (${targetHost})!`);
     }
 
     // Connection Failure Handler (Pops up Password Modal when password is required or wrong)
@@ -414,13 +522,36 @@
         authModal.style.display = 'none';
     }
 
-    modalCancelBtn.addEventListener('click', closeAuthModal);
+    let lastModalSubmitTime = 0;
+    function submitAuthModal(e) {
+        if (e && e.type === 'touchstart') {
+            e.preventDefault();
+        }
+        const now = Date.now();
+        if (now - lastModalSubmitTime < 500) return;
+        lastModalSubmitTime = now;
 
-    modalConnectBtn.addEventListener('click', () => {
         const entered = modalPasswordInput.value.trim();
         remotePinInput.value = entered;
+        modalPasswordInput.blur();
         closeAuthModal();
         startConnection(targetHost, targetPort, entered);
+    }
+
+    modalConnectBtn.addEventListener('pointerdown', submitAuthModal);
+    modalConnectBtn.addEventListener('touchstart', submitAuthModal, { passive: false });
+    modalConnectBtn.addEventListener('click', submitAuthModal);
+
+    modalCancelBtn.addEventListener('pointerdown', (e) => {
+        if (e && e.type === 'touchstart') e.preventDefault();
+        closeAuthModal();
+    });
+    modalCancelBtn.addEventListener('click', closeAuthModal);
+
+    modalPasswordInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            submitAuthModal(e);
+        }
     });
 
     // Send Ping
@@ -450,6 +581,8 @@
             if (screenCanvas.width !== bitmap.width || screenCanvas.height !== bitmap.height) {
                 screenCanvas.width = bitmap.width;
                 screenCanvas.height = bitmap.height;
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = 'high';
             }
             ctx.drawImage(bitmap, 0, 0);
             bitmap.close();
@@ -461,8 +594,10 @@
 
     // Update Floating HUD Stats Badge
     function updateHudBadge() {
+        if (!hudLatencyText) return;
+        const hostLabel = targetHost ? `${targetHost} • ` : '';
         const msDisplay = rttMs > 0 ? Math.round(rttMs) : 1;
-        hudLatencyText.textContent = `${msDisplay} ms • ${currentFps} FPS`;
+        hudLatencyText.textContent = `${hostLabel}${msDisplay} ms • ${currentFps} FPS`;
     }
 
     // Populate Screens Dropdown
@@ -471,25 +606,26 @@
         if (!screens || screens.length === 0) {
             const opt = document.createElement('option');
             opt.value = '0';
-            opt.textContent = 'Screen 1';
+            opt.textContent = 'Display 1';
             screenSelect.appendChild(opt);
             return;
         }
 
         screens.forEach((sc, idx) => {
             const opt = document.createElement('option');
-            opt.value = idx.toString();
-            opt.textContent = `${sc.name || 'Screen ' + (idx + 1)}`;
-            if (idx === activeIdx) opt.selected = true;
+            const screenId = (sc.id !== undefined) ? sc.id : idx;
+            opt.value = screenId.toString();
+            opt.textContent = `${sc.name || 'Display ' + (idx + 1)}`;
+            if (screenId === activeIdx) opt.selected = true;
             screenSelect.appendChild(opt);
         });
     }
 
     // Display Switcher Change Event
     screenSelect.addEventListener('change', () => {
-        const idx = parseInt(screenSelect.value, 10);
+        const screenId = parseInt(screenSelect.value, 10);
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'set_screen', screen_index: idx }));
+            ws.send(JSON.stringify({ type: 'set_screen', screen_index: screenId }));
             showToast(`Switching to ${screenSelect.options[screenSelect.selectedIndex].text}...`);
         }
     });
@@ -527,9 +663,9 @@
         updateVirtualCursor();
     }
 
-    // Virtual Cursor Overlay (Trackpad Mode)
+    // Virtual Cursor Overlay (Zero-Lag Hardware Accelerated Pointer)
     function updateVirtualCursor() {
-        if (!virtualCursor || !isTrackpadMode || !isConnected) {
+        if (!virtualCursor || !isConnected) {
             if (virtualCursor) virtualCursor.style.display = 'none';
             return;
         }
@@ -537,7 +673,7 @@
         const wrapRect = canvasWrapper.getBoundingClientRect();
         const x = rect.left - wrapRect.left + virtualMouseX * rect.width;
         const y = rect.top - wrapRect.top + virtualMouseY * rect.height;
-        virtualCursor.style.transform = `translate(${x}px, ${y}px)`;
+        virtualCursor.style.transform = `translate3d(${x}px, ${y}px, 0)`;
         virtualCursor.style.display = 'block';
     }
 
@@ -559,31 +695,50 @@
         
         if (e.touches.length === 1) {
             touchStartTime = Date.now();
-            prevTouchClientX = e.touches[0].clientX;
-            prevTouchClientY = e.touches[0].clientY;
+            startTouchClientX = e.touches[0].clientX;
+            startTouchClientY = e.touches[0].clientY;
+            prevTouchClientX = startTouchClientX;
+            prevTouchClientY = startTouchClientY;
             const { nx, ny } = getNormalizedCoords(e);
             touchStartX = nx;
             touchStartY = ny;
             isLongPress = false;
+            isTouchDragging = false;
 
-            if (!isTrackpadMode) {
+            if (isTrackpadMode) {
+                // In trackpad mode: check for double-tap-and-hold to start dragging
+                const timeSinceLastTap = Date.now() - trackpadLastTapTime;
+                if (timeSinceLastTap < 500) {
+                    trackpadIsDragging = true;
+                    sendMouseClick('left', 'down', virtualMouseX, virtualMouseY);
+                    if (navigator.vibrate) navigator.vibrate(35);
+                }
+                updateVirtualCursor();
+            } else {
                 virtualMouseX = nx;
                 virtualMouseY = ny;
-                sendMouseMove(nx, ny);
-            } else {
                 updateVirtualCursor();
             }
 
             longPressTimer = setTimeout(() => {
-                isLongPress = true;
-                const targetX = isTrackpadMode ? virtualMouseX : touchStartX;
-                const targetY = isTrackpadMode ? virtualMouseY : touchStartY;
-                sendMouseClick('right', 'click', targetX, targetY);
-                if (navigator.vibrate) navigator.vibrate(50);
-            }, 380);
+                if (!trackpadIsDragging && !isTouchDragging) {
+                    isLongPress = true;
+                    if (navigator.vibrate) navigator.vibrate(35);
+                }
+            }, 420);
         } else if (e.touches.length === 2) {
             clearTimeout(longPressTimer);
+            if (isTouchDragging) {
+                sendMouseClick('left', 'up', virtualMouseX, virtualMouseY);
+                isTouchDragging = false;
+            }
+            if (trackpadIsDragging) {
+                sendMouseClick('left', 'up', virtualMouseX, virtualMouseY);
+                trackpadIsDragging = false;
+            }
             isPinching = false;
+            twoFingerStartTime = Date.now();
+            twoFingerMoved = false;
             pinchStartDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
             pinchStartZoom = currentZoom;
             twoFingerPrevMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
@@ -596,6 +751,7 @@
         if (e.touches.length === 1) {
             const clientX = e.touches[0].clientX;
             const clientY = e.touches[0].clientY;
+            const moveDistPx = Math.hypot(clientX - startTouchClientX, clientY - startTouchClientY);
 
             if (isTrackpadMode) {
                 const rect = screenCanvas.getBoundingClientRect();
@@ -607,25 +763,37 @@
                 virtualMouseX = Math.max(0, Math.min(1, virtualMouseX + deltaX * 1.5));
                 virtualMouseY = Math.max(0, Math.min(1, virtualMouseY + deltaY * 1.5));
 
-                clearTimeout(longPressTimer);
+                if (moveDistPx > 14) {
+                    clearTimeout(longPressTimer);
+                    if (isLongPress && !trackpadIsDragging) {
+                        // Long-press then move -> press left button and drag!
+                        isLongPress = false;
+                        trackpadIsDragging = true;
+                        sendMouseClick('left', 'down', virtualMouseX, virtualMouseY);
+                    }
+                }
+
                 sendMouseMove(virtualMouseX, virtualMouseY);
                 updateVirtualCursor();
             } else {
-                if (currentZoom > 1.05) {
-                    panX += (clientX - prevTouchClientX);
-                    panY += (clientY - prevTouchClientY);
-                    prevTouchClientX = clientX;
-                    prevTouchClientY = clientY;
-                    updateCanvasTransform();
+                if (currentZoom > 1.05 && e.touches.length === 2) {
+                    // Zoom pan handled in 2-finger mode
                 } else {
                     const { nx, ny } = getNormalizedCoords(e);
-                    const dist = Math.hypot(nx - touchStartX, ny - touchStartY);
-                    if (dist > 0.015) {
+                    if (moveDistPx > 8) {
                         clearTimeout(longPressTimer);
+                        isLongPress = false;
+                        if (!isTouchDragging) {
+                            isTouchDragging = true;
+                            // Instant Left Mouse Down at touch origin to initiate drag and drop!
+                            sendMouseClick('left', 'down', touchStartX, touchStartY);
+                        }
                     }
                     virtualMouseX = nx;
                     virtualMouseY = ny;
-                    sendMouseMove(nx, ny);
+                    if (isTouchDragging) {
+                        sendMouseMove(nx, ny);
+                    }
                 }
             }
         } else if (e.touches.length === 2) {
@@ -637,11 +805,13 @@
             if (distDelta > 15) {
                 // Pinch-to-zoom
                 isPinching = true;
+                twoFingerMoved = true;
                 currentZoom = Math.min(4.0, Math.max(1.0, pinchStartZoom * (currentDist / (pinchStartDist || 1))));
                 if (currentZoom === 1.0) { panX = 0; panY = 0; }
                 updateCanvasTransform();
             } else if (!isPinching && Math.abs(midYDelta) > 8) {
                 // Fixed two-finger vertical scroll
+                twoFingerMoved = true;
                 const steps = midYDelta > 0 ? 2 : -2;
                 sendScroll(steps);
                 twoFingerPrevMidY = currentMidY;
@@ -653,52 +823,141 @@
         clearTimeout(longPressTimer);
         if (!requestControlCheckbox.checked || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-        if (e.changedTouches.length === 1 && !isLongPress && !isPinching) {
+        // Two-finger tap -> Right Click
+        if (e.touches.length === 0 && twoFingerStartTime > 0 && !twoFingerMoved && !isPinching && (Date.now() - twoFingerStartTime) < 320) {
+            twoFingerStartTime = 0;
+            sendMouseClick('right', 'click', virtualMouseX, virtualMouseY);
+            if (navigator.vibrate) navigator.vibrate(30);
+            return;
+        }
+        if (e.touches.length === 0) {
+            twoFingerStartTime = 0;
+        }
+
+        if (e.changedTouches.length === 1 && !isPinching) {
+            const clientX = e.changedTouches[0].clientX;
+            const clientY = e.changedTouches[0].clientY;
+            const moveDistPx = Math.hypot(clientX - startTouchClientX, clientY - startTouchClientY);
             const duration = Date.now() - touchStartTime;
-            let movedDist = 0;
-            let clickX = virtualMouseX;
-            let clickY = virtualMouseY;
 
             if (isTrackpadMode) {
-                const clientX = e.changedTouches[0].clientX;
-                const clientY = e.changedTouches[0].clientY;
-                movedDist = Math.hypot(clientX - prevTouchClientX, clientY - prevTouchClientY);
+                if (trackpadIsDragging) {
+                    sendMouseClick('left', 'up', virtualMouseX, virtualMouseY);
+                    trackpadIsDragging = false;
+                    trackpadLastTapTime = 0;
+                } else if (isLongPress && moveDistPx < 14) {
+                    sendMouseClick('right', 'click', virtualMouseX, virtualMouseY);
+                } else if (!isLongPress && duration < 420 && moveDistPx < 18) {
+                    sendMouseClick('left', 'click', virtualMouseX, virtualMouseY);
+                    trackpadLastTapTime = Date.now();
+                }
             } else {
                 const { nx, ny } = getNormalizedCoords(e.changedTouches[0]);
-                movedDist = Math.hypot(nx - touchStartX, ny - touchStartY);
-                clickX = nx;
-                clickY = ny;
-            }
-
-            if ((isTrackpadMode && duration < 250) || (!isTrackpadMode && movedDist < 0.02 && duration < 300)) {
-                const now = Date.now();
-                if (now - lastTapTime < 280) {
-                    if (currentZoom > 1.0) {
-                        currentZoom = 1.0;
-                        panX = 0;
-                        panY = 0;
-                        updateCanvasTransform();
-                        showToast('Zoom Reset');
+                if (isTouchDragging) {
+                    // Release drag: Left Mouse Up at final drop coordinates
+                    sendMouseClick('left', 'up', nx, ny);
+                    isTouchDragging = false;
+                } else if (isLongPress && moveDistPx < 14) {
+                    // Long press release without moving -> Right Click!
+                    sendMouseClick('right', 'click', touchStartX, touchStartY);
+                } else if (duration < 400 && moveDistPx < 14) {
+                    // Crisp single tap or double tap
+                    const now = Date.now();
+                    if (now - lastTapTime < 280) {
+                        if (currentZoom > 1.0) {
+                            currentZoom = 1.0;
+                            panX = 0;
+                            panY = 0;
+                            updateCanvasTransform();
+                            showToast('Zoom Reset');
+                        } else {
+                            sendMouseClick('left', 'dblclick', nx, ny);
+                        }
+                        lastTapTime = 0;
                     } else {
-                        sendMouseClick('left', 'dblclick', clickX, clickY);
+                        sendMouseClick('left', 'click', nx, ny);
+                        lastTapTime = now;
                     }
-                    lastTapTime = 0;
-                } else {
-                    sendMouseClick('left', 'click', clickX, clickY);
-                    lastTapTime = now;
                 }
+            }
+        } else {
+            if (isTouchDragging) {
+                sendMouseClick('left', 'up', virtualMouseX, virtualMouseY);
+                isTouchDragging = false;
+            }
+            if (trackpadIsDragging) {
+                sendMouseClick('left', 'up', virtualMouseX, virtualMouseY);
+                trackpadIsDragging = false;
             }
         }
     }, { passive: true });
 
-    // Send Input Event Functions
+    canvasWrapper.addEventListener('touchcancel', () => {
+        clearTimeout(longPressTimer);
+        twoFingerStartTime = 0;
+        if (isTouchDragging) {
+            sendMouseClick('left', 'up', virtualMouseX, virtualMouseY);
+            isTouchDragging = false;
+        }
+        if (trackpadIsDragging) {
+            sendMouseClick('left', 'up', virtualMouseX, virtualMouseY);
+            trackpadIsDragging = false;
+        }
+    }, { passive: true });
+
+    // Zero-lag throttled mouse move dispatcher
+    let lastMouseMoveTime = 0;
+    let pendingMouseMove = null;
+    let mouseMoveTimer = null;
+
     function sendMouseMove(x, y) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'mouse_move', x: x, y: y }));
+        // 1. Immediately update virtual cursor locally with 0ms latency
+        virtualMouseX = x;
+        virtualMouseY = y;
+        updateVirtualCursor();
+
+        // 2. Transmit to host throttled to max 60Hz to prevent queue lag and keep Wi-Fi smooth
+        const now = performance.now();
+        if (now - lastMouseMoveTime >= 16) {
+            lastMouseMoveTime = now;
+            if (mouseMoveTimer) {
+                clearTimeout(mouseMoveTimer);
+                mouseMoveTimer = null;
+            }
+            pendingMouseMove = null;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'mouse_move', x: x, y: y }));
+            }
+        } else {
+            pendingMouseMove = { x, y };
+            if (!mouseMoveTimer) {
+                mouseMoveTimer = setTimeout(() => {
+                    mouseMoveTimer = null;
+                    if (pendingMouseMove && ws && ws.readyState === WebSocket.OPEN) {
+                        lastMouseMoveTime = performance.now();
+                        ws.send(JSON.stringify({ type: 'mouse_move', x: pendingMouseMove.x, y: pendingMouseMove.y }));
+                        pendingMouseMove = null;
+                    }
+                }, 16);
+            }
         }
     }
 
+    // Direct pointermove support for external mouse or stylus
+    canvasWrapper.addEventListener('pointermove', (e) => {
+        if (e.pointerType === 'mouse') {
+            if (!requestControlCheckbox.checked || !ws || ws.readyState !== WebSocket.OPEN) return;
+            const { nx, ny } = getNormalizedCoords(e);
+            sendMouseMove(nx, ny);
+        }
+    }, { passive: true });
+
     function sendMouseClick(button, action, x, y) {
+        if (mouseMoveTimer) {
+            clearTimeout(mouseMoveTimer);
+            mouseMoveTimer = null;
+        }
+        pendingMouseMove = null;
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'mouse_click', button: button, action: action, x: x, y: y }));
         }
@@ -754,7 +1013,7 @@
                 }
                 touchModeLabel.textContent = 'TOUCH';
                 toggleTouchModeBtn.classList.remove('active-trackpad');
-                if (virtualCursor) virtualCursor.style.display = 'none';
+                updateVirtualCursor();
                 showToast('Direct Touch Mode Active');
             }
         });
@@ -768,9 +1027,86 @@
             if (active) {
                 sharePhoneScreenBtn.classList.add('active-sharing');
                 if (sharePhoneBtnText) sharePhoneBtnText.textContent = 'Stop Sharing Screen';
+                if (statusBadge && !statusBadge.classList.contains('status-connected')) {
+                    statusBadge.innerHTML = '<span class="status-dot" style="background:#8b5cf6;"></span> Sharing Active (0 Viewers)';
+                    statusBadge.className = 'status-badge status-ready';
+                }
             } else {
                 sharePhoneScreenBtn.classList.remove('active-sharing');
                 if (sharePhoneBtnText) sharePhoneBtnText.textContent = 'Start Sharing Screen';
+                const hostBox = document.getElementById('hostClientStatusBox');
+                if (hostBox) hostBox.style.display = 'none';
+                if (statusBadge) {
+                    statusBadge.innerHTML = '<span class="status-dot"></span> Ready to Connect';
+                    statusBadge.className = 'status-badge status-ready';
+                }
+
+                // Immediately notify known PCs that phone is no longer sharing screen
+                discoveredIps.forEach(ip => {
+                    try {
+                        const wsOff = new WebSocket(`ws://${ip}:5859`);
+                        wsOff.onopen = () => {
+                            try {
+                                wsOff.send(JSON.stringify({
+                                    type: 'peer_announce',
+                                    name: window.myDeviceName || 'Samsung Mobile',
+                                    ip: myDetectedIp || '',
+                                    sharing: false
+                                }));
+                            } catch(e) {}
+                            setTimeout(() => { try { wsOff.close(); } catch(e) {} }, 100);
+                        };
+                        wsOff.onerror = () => { try { wsOff.close(); } catch(e) {} };
+                    } catch(e) {}
+                });
+            }
+        }
+    };
+
+    // Live Connected Clients Notification from Android ScreenShareService
+    window.hasHostClients = false;
+    window.onHostClientsChanged = function(count, clientName, clientIp, joined) {
+        window.hasHostClients = (count > 0);
+        const hostBox = document.getElementById('hostClientStatusBox');
+        const countText = document.getElementById('hostClientCountText');
+        const nameText = document.getElementById('hostClientNameText');
+        const ipText = document.getElementById('hostClientIpText');
+
+        if (count > 0) {
+            const displayName = clientName || 'Linux PC';
+            const displayIp = clientIp || '';
+            const ipSuffix = displayIp ? ` (${displayIp})` : '';
+
+            if (statusBadge) {
+                statusBadge.innerHTML = `<span class="status-dot" style="background:#34d399; box-shadow:0 0 8px #34d399;"></span> Connected: ${displayName}${ipSuffix}`;
+                statusBadge.className = 'status-badge status-connected';
+            }
+            if (hostBox) {
+                hostBox.style.display = 'block';
+                if (countText) countText.textContent = `${count} Device${count > 1 ? 's' : ''} Connected`;
+                if (nameText) nameText.textContent = `${displayName}`;
+                if (ipText) ipText.textContent = `${displayIp ? displayIp + ':5859 • ' : ''}Live View & Control Active`;
+            }
+            if (joined) {
+                showToast(`Device Connected: ${displayName}${ipSuffix}`);
+            }
+        } else {
+            if (hostBox) {
+                hostBox.style.display = 'none';
+            }
+            if (window.isPhoneSharing) {
+                if (statusBadge) {
+                    statusBadge.innerHTML = '<span class="status-dot" style="background:#8b5cf6;"></span> Sharing Active (0 Viewers)';
+                    statusBadge.className = 'status-badge status-ready';
+                }
+            } else {
+                if (statusBadge) {
+                    statusBadge.innerHTML = '<span class="status-dot"></span> Ready to Connect';
+                    statusBadge.className = 'status-badge status-ready';
+                }
+            }
+            if (!joined && count === 0) {
+                showToast('Remote Device Disconnected');
             }
         }
     };
@@ -779,6 +1115,9 @@
         sharePhoneScreenBtn.addEventListener('click', () => {
             if (!window.isPhoneSharing) {
                 showToast('Starting Phone Screen Share...');
+                if (window.DogRemoteNativeBridge && window.DogRemoteNativeBridge.isAccessibilityEnabled && !window.DogRemoteNativeBridge.isAccessibilityEnabled()) {
+                    showToast('Note: Turn ON DogRemote in Accessibility Settings to allow PC touch control');
+                }
                 if (window.DogRemoteNativeBridge && window.DogRemoteNativeBridge.startSharing) {
                     window.DogRemoteNativeBridge.startSharing();
                 } else if (window.startPhoneScreenShare) {
@@ -796,6 +1135,57 @@
             }
         });
     }
+
+    const enableA11yBtn = document.getElementById('enableA11yBtn');
+    function checkAccessibilityStatus() {
+        if (enableA11yBtn && window.DogRemoteNativeBridge && window.DogRemoteNativeBridge.isAccessibilityEnabled) {
+            const isEnabled = window.DogRemoteNativeBridge.isAccessibilityEnabled();
+            if (isEnabled) {
+                enableA11yBtn.innerHTML = `
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span style="color:#34d399; font-weight:700;">Remote Control Active</span>
+                `;
+                enableA11yBtn.style.borderColor = 'rgba(52, 211, 153, 0.45)';
+                enableA11yBtn.style.background = 'rgba(16, 185, 129, 0.12)';
+            } else {
+                enableA11yBtn.innerHTML = `
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/><circle cx="12" cy="12" r="4"/></svg>
+                    <span>Remote Control Permission</span>
+                `;
+                enableA11yBtn.style.borderColor = '';
+                enableA11yBtn.style.background = '';
+            }
+        }
+    }
+
+    if (enableA11yBtn) {
+        enableA11yBtn.addEventListener('click', () => {
+            if (window.DogRemoteNativeBridge && window.DogRemoteNativeBridge.openAccessibilitySettings) {
+                showToast('Opening Accessibility Settings. Turn ON DogRemote to enable remote control.');
+                window.DogRemoteNativeBridge.openAccessibilitySettings();
+            } else {
+                showToast('Enable DogRemote under Settings -> Accessibility -> Installed apps');
+            }
+        });
+    }
+
+    function checkInitialState() {
+        checkAccessibilityStatus();
+        if (window.DogRemoteNativeBridge && window.DogRemoteNativeBridge.getConnectedClientsInfo) {
+            try {
+                const infoStr = window.DogRemoteNativeBridge.getConnectedClientsInfo();
+                const info = JSON.parse(infoStr);
+                if (info.count > 0) {
+                    window.onHostClientsChanged(info.count, 'Linux PC', '192.168.8.185', false);
+                }
+                if (info.sharing) {
+                    window.setPhoneSharingState(true);
+                }
+            } catch(e) {}
+        }
+    }
+    setTimeout(checkInitialState, 350);
+    setInterval(checkAccessibilityStatus, 3000);
 
     hiddenKeyboardInput.addEventListener('input', () => {
         const val = hiddenKeyboardInput.value;
@@ -846,7 +1236,7 @@
 
     // Subnet Scanner with Deduplication and Dynamic Ping
     function discoverLocalDevices() {
-        if (isScanningLocal) return;
+        if (isScanningLocal || isConnected || (window.isPhoneSharing && window.hasHostClients)) return;
         isScanningLocal = true;
         if (refreshDiscoveryBtn) refreshDiscoveryBtn.classList.add('rotating');
 
@@ -950,7 +1340,8 @@
                         probeWs.send(JSON.stringify({
                             type: 'peer_announce',
                             name: window.myDeviceName || 'Samsung Mobile',
-                            ip: myDetectedIp || ''
+                            ip: myDetectedIp || '',
+                            sharing: Boolean(window.isPhoneSharing)
                         }));
                     } catch(e) {}
                     setTimeout(finish, 600);
@@ -1072,6 +1463,7 @@
 
     // Prune dead/unreachable hosts after 5 seconds of silence
     setInterval(() => {
+        if (isConnected || (window.isPhoneSharing && window.hasHostClients)) return;
         const now = Date.now();
         discoveredHosts.forEach((val, ip) => {
             if (now - val.lastSeen > 5000) {
@@ -1082,8 +1474,9 @@
 
     refreshDiscoveryBtn.addEventListener('click', discoverLocalDevices);
 
-    // Periodic announce heartbeat to keep mobile device discovered on Host PC
+    // Periodic announce heartbeat to keep mobile device discovered on Host PC ONLY when actively sharing
     setInterval(() => {
+        if (isConnected || !window.isPhoneSharing || window.hasHostClients) return;
         discoveredIps.forEach(ip => {
             try {
                 const wsAnnounce = new WebSocket(`ws://${ip}:5859`);
@@ -1092,7 +1485,8 @@
                         wsAnnounce.send(JSON.stringify({
                             type: 'peer_announce',
                             name: window.myDeviceName || 'Samsung Mobile',
-                            ip: myDetectedIp || ''
+                            ip: myDetectedIp || '',
+                            sharing: true
                         }));
                     } catch(e) {}
                     setTimeout(() => {
@@ -1104,7 +1498,7 @@
                 };
             } catch(e) {}
         });
-    }, 8000);
+    }, 5000);
 
     // Initial Run
     discoverLocalDevices();

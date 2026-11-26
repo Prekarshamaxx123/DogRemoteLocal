@@ -17,14 +17,20 @@ import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.net.wifi.WifiManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
+import android.view.WindowManager;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.widget.Toast;
 import androidx.core.app.NotificationCompat;
+import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -57,19 +63,63 @@ public class ScreenShareService extends Service {
     private volatile boolean isCapturing = false;
     private volatile byte[] lastFrameBytes = null;
     private long lastFrameTime = 0;
+    private float lastNormX = 0.5f;
+    private float lastNormY = 0.5f;
+    private float mouseDownNormX = -1f;
+    private float mouseDownNormY = -1f;
+    private long mouseDownTime = 0;
+    private volatile boolean isLeftMouseDown = false;
 
     public static ScreenShareService getInstance() {
         return instance;
     }
 
+    public interface ClientListener {
+        void onClientCountChanged(int count, String clientName, String clientIp, boolean joined);
+    }
+
+    private static volatile ClientListener clientListener = null;
+
+    public static void setClientListener(ClientListener listener) {
+        clientListener = listener;
+    }
+
+    public static int getClientCount() {
+        return instance != null ? instance.clientSockets.size() : 0;
+    }
+
+    public static String getSocketIp(Socket socket) {
+        try {
+            if (socket != null && socket.getInetAddress() != null) {
+                String ip = socket.getInetAddress().getHostAddress();
+                if (ip != null && ip.startsWith("::ffff:")) {
+                    return ip.substring(7);
+                }
+                return ip != null ? ip : "Remote Device";
+            }
+        } catch (Exception ignored) {}
+        return "Remote Device";
+    }
+
     public static void addStreamingClient(Socket socket) {
+        addStreamingClient(socket, "Remote Device", getSocketIp(socket));
+    }
+
+    public static void addStreamingClient(Socket socket, String clientName, String clientIp) {
         if (instance != null) {
             try {
+                MainActivity.bindSocketToPhysicalWifi(socket);
                 socket.setTcpNoDelay(true);
                 socket.setSoTimeout(0);
             } catch (Exception ignored) {}
             instance.clientSockets.add(socket);
-            Log.d(TAG, "Added streaming client: " + socket.getRemoteSocketAddress() + " (total: " + instance.clientSockets.size() + ")");
+            Log.d(TAG, "Added streaming client: " + clientName + " (" + clientIp + ") (total: " + instance.clientSockets.size() + ")");
+
+            if (clientListener != null) {
+                try {
+                    clientListener.onClientCountChanged(instance.clientSockets.size(), clientName, clientIp, true);
+                } catch (Exception ignored) {}
+            }
 
             // Send initial frame immediately if already captured so viewer never starts with black screen
             byte[] initialFrame = instance.lastFrameBytes;
@@ -129,17 +179,223 @@ public class ScreenShareService extends Service {
                             }
                         } else if (type == 9) { // TYPE_DISCONNECT
                             break;
+                        } else if (type == 4) { // TYPE_INPUT_MOUSE_MOVE
+                            if (len >= 8 && instance != null) {
+                                ByteBuffer bb = ByteBuffer.wrap(body);
+                                bb.order(ByteOrder.BIG_ENDIAN);
+                                float nx = bb.getFloat();
+                                float ny = bb.getFloat();
+                                instance.handleMouseMove(nx, ny);
+                            }
+                        } else if (type == 5) { // TYPE_INPUT_MOUSE_CLICK
+                            if (instance != null) {
+                                String jsonStr = new String(body, "UTF-8");
+                                instance.handleMouseClick(jsonStr);
+                            }
+                        } else if (type == 6) { // TYPE_INPUT_KEY
+                            if (instance != null) {
+                                String jsonStr = new String(body, "UTF-8");
+                                instance.handleKeyInput(jsonStr);
+                            }
+                        } else if (type == 10) { // TYPE_INPUT_SCROLL
+                            if (len >= 4 && instance != null) {
+                                ByteBuffer bb = ByteBuffer.wrap(body);
+                                bb.order(ByteOrder.BIG_ENDIAN);
+                                int steps = bb.getInt();
+                                instance.handleScroll(steps);
+                            }
+                        } else if (type == 11) { // TYPE_CLIPBOARD
+                            if (instance != null) {
+                                String clipText = new String(body, "UTF-8");
+                                instance.handleClipboard(clipText);
+                            }
                         }
                     }
                 } catch (Exception ignored) {}
                 finally {
                     if (instance != null) {
                         instance.clientSockets.remove(socket);
+                        if (clientListener != null) {
+                            try {
+                                clientListener.onClientCountChanged(instance.clientSockets.size(), clientName, clientIp, false);
+                            } catch (Exception ignored) {}
+                        }
                     }
                     try { socket.close(); } catch (Exception ignored) {}
-                    Log.d(TAG, "Streaming client disconnected: " + socket.getRemoteSocketAddress());
+                    Log.d(TAG, "Streaming client disconnected: " + clientName + " (" + clientIp + ")");
                 }
             }).start();
+        }
+    }
+
+    public void handleMouseMove(float nx, float ny) {
+        lastNormX = nx;
+        lastNormY = ny;
+        if (isLeftMouseDown && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            DogAccessibilityService a11y = DogAccessibilityService.getInstance();
+            if (a11y != null) {
+                int[] realSize = getRealScreenSize();
+                float px = Math.max(1f, Math.min(realSize[0] - 2f, nx * realSize[0]));
+                float py = Math.max(1f, Math.min(realSize[1] - 2f, ny * realSize[1]));
+                a11y.touchMove(px, py);
+            }
+        }
+    }
+
+    private int[] getRealScreenSize() {
+        try {
+            WindowManager wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+            if (wm != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    android.graphics.Rect bounds = wm.getMaximumWindowMetrics().getBounds();
+                    return new int[]{bounds.width(), bounds.height()};
+                } else {
+                    DisplayMetrics dm = new DisplayMetrics();
+                    wm.getDefaultDisplay().getRealMetrics(dm);
+                    return new int[]{dm.widthPixels, dm.heightPixels};
+                }
+            }
+        } catch (Exception ignored) {}
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        return new int[]{dm.widthPixels, dm.heightPixels};
+    }
+
+    public void handleMouseClick(String jsonStr) {
+        try {
+            JSONObject obj = new JSONObject(jsonStr);
+            String button = obj.optString("button", "left");
+            String action = obj.optString("action", "click");
+            float nx = (float) obj.optDouble("x", lastNormX);
+            float ny = (float) obj.optDouble("y", lastNormY);
+            lastNormX = nx;
+            lastNormY = ny;
+
+            int[] realSize = getRealScreenSize();
+            float px = Math.max(1f, Math.min(realSize[0] - 2f, nx * realSize[0]));
+            float py = Math.max(1f, Math.min(realSize[1] - 2f, ny * realSize[1]));
+
+            DogAccessibilityService a11y = DogAccessibilityService.getInstance();
+            if (a11y == null) {
+                Log.w(TAG, "Touch/Click ignored: DogAccessibilityService is not enabled!");
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    try {
+                        Toast.makeText(getApplicationContext(), "Turn ON DogRemote in Accessibility Settings to enable remote control", Toast.LENGTH_SHORT).show();
+                    } catch (Exception ignored) {}
+                });
+                return;
+            }
+
+            if ("right".equals(button)) {
+                // Right click on PC acts as Android Back button
+                if ("down".equals(action) || "click".equals(action)) {
+                    a11y.pressBack();
+                }
+            } else if ("middle".equals(button)) {
+                // Middle click on PC acts as Android Home button
+                if ("down".equals(action) || "click".equals(action)) {
+                    a11y.pressHome();
+                }
+            } else {
+                // Left click / Touch
+                if ("down".equals(action)) {
+                    isLeftMouseDown = true;
+                    mouseDownNormX = nx;
+                    mouseDownNormY = ny;
+                    mouseDownTime = System.currentTimeMillis();
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        a11y.touchDown(px, py);
+                    }
+                } else if ("up".equals(action)) {
+                    isLeftMouseDown = false;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        a11y.touchUp(px, py);
+                    } else {
+                        float startX = (mouseDownNormX >= 0) ? Math.max(1f, Math.min(realSize[0] - 2f, mouseDownNormX * realSize[0])) : px;
+                        float startY = (mouseDownNormY >= 0) ? Math.max(1f, Math.min(realSize[1] - 2f, mouseDownNormY * realSize[1])) : py;
+                        long dur = (mouseDownTime > 0) ? (System.currentTimeMillis() - mouseDownTime) : 50;
+                        float dist = (float) Math.hypot(px - startX, py - startY);
+
+                        if (dist > 25) {
+                            a11y.drag(startX, startY, px, py, Math.min(Math.max(dur, 120), 800));
+                        } else {
+                            a11y.tap(startX, startY);
+                        }
+                    }
+                    mouseDownNormX = -1f;
+                    mouseDownNormY = -1f;
+                    mouseDownTime = 0;
+                } else if ("click".equals(action)) {
+                    a11y.tap(px, py);
+                    mouseDownNormX = -1f;
+                    mouseDownNormY = -1f;
+                    mouseDownTime = 0;
+                } else if ("dblclick".equals(action)) {
+                    a11y.tap(px, py);
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        if (DogAccessibilityService.getInstance() != null) {
+                            DogAccessibilityService.getInstance().tap(px, py);
+                        }
+                    }, 120);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling mouse click: " + e.getMessage());
+        }
+    }
+
+    public void handleScroll(int steps) {
+        DogAccessibilityService a11y = DogAccessibilityService.getInstance();
+        if (a11y != null) {
+            a11y.scroll(steps);
+        }
+    }
+
+    public void handleKeyInput(String jsonStr) {
+        try {
+            JSONObject obj = new JSONObject(jsonStr);
+            String key = obj.optString("key", "");
+            String action = obj.optString("action", "down");
+
+            DogAccessibilityService a11y = DogAccessibilityService.getInstance();
+            if (a11y == null) return;
+
+            boolean isTrigger = "down".equals(action) || "key".equals(action) || "type".equals(action);
+            if (!isTrigger) return;
+
+            if ("Escape".equals(key) || "Back".equals(key)) {
+                a11y.pressBack();
+            } else if ("Super_L".equals(key) || "Home".equals(key)) {
+                a11y.pressHome();
+            } else if ("BackSpace".equals(key) || "Delete".equals(key)) {
+                a11y.backspace();
+            } else if ("Return".equals(key) || "Enter".equals(key)) {
+                a11y.pressEnter();
+            } else if ("space".equals(key)) {
+                a11y.typeText(" ");
+            } else if ("Tab".equals(key)) {
+                a11y.typeText("\t");
+            } else if ("Control_L".equals(key) || "Alt_L".equals(key) || "Shift_L".equals(key)) {
+                // Modifier keys by themselves ignored
+            } else if (key.length() > 0) {
+                a11y.typeText(key);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling key input: " + e.getMessage());
+        }
+    }
+
+    public void handleClipboard(String clipText) {
+        try {
+            new Handler(Looper.getMainLooper()).post(() -> {
+                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (cm != null) {
+                    ClipData clip = ClipData.newPlainText("DogRemote", clipText);
+                    cm.setPrimaryClip(clip);
+                    Log.d(TAG, "Synced clipboard from PC: " + (clipText.length() > 20 ? clipText.substring(0, 20) + "..." : clipText));
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "Error handling clipboard: " + e.getMessage());
         }
     }
 
@@ -221,8 +477,9 @@ public class ScreenShareService extends Service {
             }
 
             DisplayMetrics dm = getResources().getDisplayMetrics();
-            int screenWidth = dm.widthPixels;
-            int screenHeight = dm.heightPixels;
+            int[] realSize = getRealScreenSize();
+            int screenWidth = realSize[0];
+            int screenHeight = realSize[1];
 
             // Target max 720 width for ultra low-latency capture and high FPS
             int targetWidth = Math.min(720, screenWidth);
@@ -399,6 +656,11 @@ public class ScreenShareService extends Service {
     private void stopScreenCapture() {
         isCapturing = false;
         clientSockets.clear();
+        if (clientListener != null) {
+            try {
+                clientListener.onClientCountChanged(0, "", "", false);
+            } catch (Exception ignored) {}
+        }
         if (heartbeatThread != null) {
             heartbeatThread.interrupt();
             heartbeatThread = null;
@@ -438,6 +700,13 @@ public class ScreenShareService extends Service {
         wifiLock = null;
 
         Log.d(TAG, "Screen Capture stopped");
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        stopScreenCapture();
+        stopSelf();
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override
